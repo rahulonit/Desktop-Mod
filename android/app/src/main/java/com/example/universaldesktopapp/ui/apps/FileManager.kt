@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.Settings
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -18,6 +19,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
@@ -204,15 +206,12 @@ fun FileManagerApp() {
                                 Modifier.clip(MaterialTheme.shapes.medium)
                                     .background(if (selected?.absolutePath == file.absolutePath) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)
                                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f), MaterialTheme.shapes.medium)
-                                    .clickable {
-                                    selected = file
-                                    if (file.isDirectory) current = file else when (file.extension.lowercase()) {
-                                        "jpg", "jpeg", "png", "gif", "webp", "bmp", "ico", "heic", "heif" -> MediaOpenController.open(file, MediaKind.IMAGE)
-                                        "mp4", "mkv", "avi", "mov", "webm", "m4v", "3gp", "ts" -> MediaOpenController.open(file, MediaKind.VIDEO)
-                                        "mp3", "wav", "aac", "flac", "m4a", "ogg" -> MediaOpenController.open(file, MediaKind.AUDIO)
-                                        else -> message = "${file.name} • ${file.length()} bytes"
-                                    }
-                                }.padding(12.dp),
+                                    .pointerInput(file.absolutePath) {
+                                        detectTapGestures(
+                                            onTap = { selected = file },
+                                            onDoubleTap = { selected = file; openEntry(file) },
+                                        )
+                                    }.padding(12.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
                                 androidx.compose.foundation.Image(

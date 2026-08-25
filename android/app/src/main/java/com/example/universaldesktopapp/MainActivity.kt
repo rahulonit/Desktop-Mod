@@ -76,7 +76,8 @@ class MainActivity : ComponentActivity() {
       receiverConnected -> "${connection.receiverTransport ?: "Desktop"} connected"
       connection.externalDisplays.any { it.supportsPresentation } -> "External display available"
       connection.wirelessReceivers.isNotEmpty() -> "Wireless receiver available"
-      connection.usbCableConnected -> "USB connected • receiver not found"
+      connection.usbTetheringActive -> "USB Desktop searching"
+      connection.usbCableConnected -> "USB connected • enable tethering"
       else -> "Searching for displays"
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -115,7 +116,7 @@ class MainActivity : ComponentActivity() {
           ConnectionMethods(connection, false) { selectedMethod = it }
         }
 
-        if (connection.wirelessReceivers.isNotEmpty()) NearbyReceivers(connection.wirelessReceivers)
+        if (connection.wirelessReceivers.isNotEmpty()) NearbyReceivers(connection.wirelessReceivers, "Wireless")
 
         Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .55f))) {
           if (wide) Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -169,7 +170,9 @@ class MainActivity : ComponentActivity() {
     val usbConnected = connection.receiverConnected && connection.receiverTransport == "USB"
     val usbStatus = when {
       usbConnected -> "Connected"
-      connection.usbCableConnected -> "Receiver Not Found"
+      connection.usbTetheringActive && connection.wirelessReceivers.isNotEmpty() -> "Available"
+      connection.usbTetheringActive -> "Receiver Not Found"
+      connection.usbCableConnected -> "USB Tethering Off"
       else -> "Searching"
     }
     val external = connection.externalDisplays.firstOrNull()
@@ -184,12 +187,12 @@ class MainActivity : ComponentActivity() {
       connection.wirelessReceivers.isNotEmpty() -> "Available • ${connection.wirelessReceivers.size} found"
       else -> "Searching"
     }
-    ConnectionCard(modifier, "USB", "USB to Windows PC", "Recommended • fastest", "Connect a USB data cable. The Windows receiver is detected automatically after it connects.", usbStatus, usbConnected, "View setup") { onSelect(ConnectionMethod.USB) }
+    ConnectionCard(modifier, "USB", "USB to Windows PC", "No Developer Mode required", "Connect a USB data cable and enable USB tethering. Desktop Mod then uses a direct private USB network.", usbStatus, usbConnected, "View setup") { onSelect(ConnectionMethod.USB) }
     ConnectionCard(modifier, "HDMI", "USB-C / HDMI monitor", "Native external display", "Android checks for a real secondary presentation display. Mirror-only outputs are not treated as desktop mode.", externalStatus, external?.supportsPresentation == true, "View setup") { onSelect(ConnectionMethod.EXTERNAL_DISPLAY) }
     ConnectionCard(modifier, "Wi-Fi", "Wi-Fi to PC or TV", "Nearby receiver discovery", "Compatible Desktop Mod receivers on the same network appear below. Select one to request a wireless session.", wirelessStatus, wirelessConnected, "View setup") { onSelect(ConnectionMethod.WIFI) }
   }
 
-  @Composable private fun NearbyReceivers(receivers: List<WirelessReceiver>) {
+  @Composable private fun NearbyReceivers(receivers: List<WirelessReceiver>, transport: String) {
     Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .55f))) {
       Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
         Text("Nearby wireless receivers", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -199,7 +202,7 @@ class MainActivity : ComponentActivity() {
               Text(receiver.name, fontWeight = FontWeight.SemiBold)
               Text("${receiver.platform} • ${receiver.address}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
-            Button(onClick = { ConnectionMonitor.requestWirelessConnection(receiver) }) { Text("Connect") }
+            Button(onClick = { ConnectionMonitor.requestConnection(receiver, transport) }) { Text("Connect") }
           }
         }
       }
@@ -217,7 +220,9 @@ class MainActivity : ComponentActivity() {
     val status = when (method) {
       ConnectionMethod.USB -> when {
         connection.receiverConnected && connection.receiverTransport == "USB" -> "Connected"
-        connection.usbCableConnected -> "Receiver Not Found"
+        connection.usbTetheringActive && connection.wirelessReceivers.isNotEmpty() -> "Available"
+        connection.usbTetheringActive -> "Receiver Not Found"
+        connection.usbCableConnected -> "USB Tethering Off"
         else -> "Searching"
       }
       ConnectionMethod.EXTERNAL_DISPLAY -> when {
@@ -234,10 +239,10 @@ class MainActivity : ComponentActivity() {
     val steps = when (method) {
       ConnectionMethod.USB -> listOf(
         "Use a USB data cable—not a charge-only cable—to connect the phone to the Windows PC.",
-        "Enable Developer options and USB debugging on this phone.",
-        "Open Desktop Mod Receiver on Windows. It configures ADB port forwarding automatically.",
-        "Accept the USB debugging authorization prompt on the phone and choose Always allow for this computer if desired.",
-        "Press Connect in the Windows receiver. The independent desktop will appear on the PC.",
+        "Open Android USB tethering settings and turn on USB tethering. Developer Mode and USB debugging are not required.",
+        "Open Desktop Mod Receiver on Windows and allow private-network access if Windows Firewall asks.",
+        "Wait for the PC receiver to appear in the list on this page.",
+        "Tap Connect beside the PC. The independent desktop will open through the private USB network.",
       )
       ConnectionMethod.EXTERNAL_DISPLAY -> listOf(
         "Confirm that the phone supports video output through USB-C DisplayPort Alt Mode or its manufacturer desktop feature.",
@@ -286,11 +291,11 @@ class MainActivity : ComponentActivity() {
         steps.forEachIndexed { index, step -> GuideStep(index + 1, step) }
         when (method) {
           ConnectionMethod.USB -> {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-              OutlinedButton(onClick = { startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) }, Modifier.weight(1f)) { Text("Open USB debugging") }
-              if (connection.receiverConnected && connection.receiverTransport == "USB") Button(onClick = { UsbService.disconnectReceiver() }, Modifier.weight(1f)) { Text("Disconnect USB Desktop") }
-            }
-            if (status == "Receiver Not Found") GuideNotice("The cable is detected, but Desktop Mod Receiver has not connected. Open the Windows receiver, accept the authorization prompt, and press Connect.", true)
+            Button(onClick = { openTetheringSettings() }, Modifier.fillMaxWidth()) { Text("Open USB tethering settings") }
+            if (connection.receiverConnected && connection.receiverTransport == "USB") Button(onClick = { UsbService.disconnectReceiver() }, Modifier.fillMaxWidth()) { Text("Disconnect USB Desktop") }
+            if (connection.usbTetheringActive && connection.wirelessReceivers.isNotEmpty()) NearbyReceivers(connection.wirelessReceivers, "USB")
+            else if (status == "Receiver Not Found") GuideNotice("USB tethering is active, but no receiver was found. Open the Windows receiver and allow it through the private-network firewall.", true)
+            else if (status == "USB Tethering Off") GuideNotice("The cable is connected. Turn on USB tethering to create the private USB network used by Desktop Mod.", false)
           }
           ConnectionMethod.EXTERNAL_DISPLAY -> {
             if (external?.supportsPresentation == true) Button(onClick = { startNativeDesktop(external.id) }, Modifier.fillMaxWidth()) { Text("Start Native Desktop on ${external.name}") }
@@ -299,7 +304,7 @@ class MainActivity : ComponentActivity() {
           }
           ConnectionMethod.WIFI -> {
             if (connection.wirelessReceivers.isEmpty()) GuideNotice("Searching for compatible receivers. Confirm both devices are on the same subnet and allow UDP 50505 and TCP 5000 through the receiver firewall.", false)
-            else NearbyReceivers(connection.wirelessReceivers)
+            else NearbyReceivers(connection.wirelessReceivers, "Wireless")
           }
         }
         Text("Your phone remains usable and is not mirrored while Desktop Mode is active.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 12.dp))
@@ -332,7 +337,7 @@ class MainActivity : ComponentActivity() {
 
   @Composable private fun PermissionButtons(stacked: Boolean = false) {
     val modifier = if (stacked) Modifier.fillMaxWidth() else Modifier
-    OutlinedButton(onClick = { startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) }, modifier = modifier) { Text("USB debugging") }
+    OutlinedButton(onClick = { openTetheringSettings() }, modifier = modifier) { Text("USB tethering") }
     if (!stacked) Spacer(Modifier.width(10.dp))
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
       Button(onClick = { startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))) }, modifier = modifier) { Text("Grant file access") }
@@ -379,6 +384,11 @@ class MainActivity : ComponentActivity() {
       nativePresentation = DesktopPresentation(this, display).also { it.show() }
       nativeDisplayId = displayId
     }
+  }
+
+  private fun openTetheringSettings() {
+    runCatching { startActivity(Intent("android.settings.TETHER_SETTINGS")) }
+      .onFailure { startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS)) }
   }
 
   override fun onDestroy() {

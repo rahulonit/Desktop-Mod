@@ -77,12 +77,16 @@ fun AudioPlayerApp(initialFile: File? = null) {
     var title by remember(initialFile) { mutableStateOf(initialFile?.name ?: "No audio selected") }
     var playing by remember { mutableStateOf(false) }
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
+    var audioOutput by remember { mutableStateOf("Phone / system default") }
 
     LaunchedEffect(source) {
         source?.let { uri ->
             runCatching { player?.release() }
             title = uri.lastPathSegment ?: "Audio"
-            player = MediaPlayer.create(context, uri)?.apply { setOnCompletionListener { playing = false } }
+            player = MediaPlayer.create(context, uri)?.apply {
+                audioOutput = AudioOutputRouter.routeToBestExternalOutput(context, this)
+                setOnCompletionListener { playing = false }
+            }
             playing = false
         }
     }
@@ -90,6 +94,7 @@ fun AudioPlayerApp(initialFile: File? = null) {
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("♫", style = MaterialTheme.typography.displayLarge)
         Text(title, style = MaterialTheme.typography.titleMedium)
+        Text("Audio output: $audioOutput", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
         Row(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = { player?.let { if (playing) it.pause() else it.start(); playing = !playing } }, enabled = player != null) { Text(if (playing) "Pause" else "Play") }
             OutlinedButton(onClick = { player?.seekTo(0); player?.pause(); playing = false }, enabled = player != null) { Text("Stop") }

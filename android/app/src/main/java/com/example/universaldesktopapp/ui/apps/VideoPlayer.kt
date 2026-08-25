@@ -21,6 +21,7 @@ fun VideoPlayerApp(initialFile: File? = null) {
     var source by remember(initialFile) { mutableStateOf(initialFile?.let(Uri::fromFile)) }
     var error by remember { mutableStateOf<String?>(null) }
     var videoView by remember { mutableStateOf<VideoView?>(null) }
+    var audioOutput by remember { mutableStateOf("Phone / system default") }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -35,6 +36,7 @@ fun VideoPlayerApp(initialFile: File? = null) {
                     val controls = MediaController(viewContext)
                     controls.setAnchorView(this)
                     setMediaController(controls)
+                    setOnPreparedListener { player -> audioOutput = AudioOutputRouter.routeToBestExternalOutput(viewContext, player) }
                     setOnErrorListener { _, what, extra -> error = "Video codec/container is not supported ($what/$extra)"; true }
                 }
             }, update = { view -> source?.let { if (view.tag != it) { view.tag = it; view.setVideoURI(it); view.start() } } }, modifier = Modifier.fillMaxSize())
@@ -44,5 +46,6 @@ fun VideoPlayerApp(initialFile: File? = null) {
                 }
             }
             error?.let { Text(it, color = Color(0xFFFFB4AB)) }
+            Text("Audio output: $audioOutput", color = Color.White.copy(alpha = .72f), modifier = Modifier.align(Alignment.BottomStart).padding(10.dp), style = MaterialTheme.typography.labelSmall)
     }
 }

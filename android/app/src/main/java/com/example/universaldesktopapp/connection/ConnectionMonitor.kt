@@ -12,6 +12,7 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
+import java.net.NetworkInterface
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.thread
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,6 +36,7 @@ data class WirelessReceiver(
 
 data class ConnectionSnapshot(
     val usbCableConnected: Boolean = false,
+    val usbTetheringActive: Boolean = false,
     val receiverConnected: Boolean = false,
     val receiverTransport: String? = null,
     val externalDisplays: List<ExternalDisplayInfo> = emptyList(),
@@ -61,11 +63,12 @@ object ConnectionMonitor : DisplayManager.DisplayListener {
         thread(name = "DesktopModDiscovery", isDaemon = true) { discoveryLoop() }
     }
 
-    fun requestWirelessConnection(receiver: WirelessReceiver) {
+    fun requestConnection(receiver: WirelessReceiver, transport: String) {
+        UsbService.nextTransportHint.value = transport
         thread(name = "DesktopModWirelessStart", isDaemon = true) {
             runCatching {
                 DatagramSocket().use { socket ->
-                    val message = "DESKTOP_MOD_START_V1"
+                    val message = "DESKTOP_MOD_START_V1|$transport"
                     val bytes = message.toByteArray(Charsets.UTF_8)
                     socket.send(DatagramPacket(bytes, bytes.size, InetAddress.getByName(receiver.address), DISCOVERY_PORT))
                 }
@@ -78,6 +81,9 @@ object ConnectionMonitor : DisplayManager.DisplayListener {
         val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val plugged = battery?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0
         val usbCable = plugged == BatteryManager.BATTERY_PLUGGED_USB
+        val usbTethering = networkInterfaces().any { network ->
+            network.isUp && !network.isLoopback && listOf("rndis", "usb", "ncm").any { network.name.contains(it, ignoreCase = true) }
+        }
         val manager = displayManager
         val presentationIds = manager?.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)?.map { it.displayId }?.toSet().orEmpty()
         val external = manager?.displays.orEmpty()
@@ -87,6 +93,7 @@ object ConnectionMonitor : DisplayManager.DisplayListener {
         receivers.entries.removeIf { now - it.value.lastSeen > 12_000L }
         mutableSnapshot.value = ConnectionSnapshot(
             usbCableConnected = usbCable,
+            usbTetheringActive = usbTethering,
             receiverConnected = UsbService.isReceiverConnected.value,
             receiverTransport = UsbService.receiverTransport.value,
             externalDisplays = external,
@@ -104,7 +111,11 @@ object ConnectionMonitor : DisplayManager.DisplayListener {
                     socket.soTimeout = 1200
                     socket.bind(InetSocketAddress(0))
                     val bytes = DISCOVERY_REQUEST.toByteArray(Charsets.UTF_8)
-                    socket.send(DatagramPacket(bytes, bytes.size, InetAddress.getByName("255.255.255.255"), DISCOVERY_PORT))
+                    val broadcastTargets = networkInterfaces().flatMap { it.interfaceAddresses.orEmpty() }
+                        .mapNotNull { it.broadcast }.distinct().ifEmpty { listOf(InetAddress.getByName("255.255.255.255")) }
+                    broadcastTargets.forEach { target ->
+                        runCatching { socket.send(DatagramPacket(bytes, bytes.size, target, DISCOVERY_PORT)) }
+                    }
                     val deadline = System.currentTimeMillis() + 1500
                     while (System.currentTimeMillis() < deadline) {
                         val buffer = ByteArray(512)
@@ -131,4 +142,7 @@ object ConnectionMonitor : DisplayManager.DisplayListener {
     override fun onDisplayAdded(displayId: Int) = refreshLocalSignals()
     override fun onDisplayRemoved(displayId: Int) = refreshLocalSignals()
     override fun onDisplayChanged(displayId: Int) = refreshLocalSignals()
+
+    private fun networkInterfaces(): List<NetworkInterface> =
+        runCatching { NetworkInterface.getNetworkInterfaces()?.toList().orEmpty() }.getOrDefault(emptyList())
 }

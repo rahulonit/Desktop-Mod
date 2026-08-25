@@ -13,6 +13,7 @@ class UsbService : Service() {
     companion object {
         val isReceiverConnected = MutableStateFlow(false)
         val receiverTransport = MutableStateFlow<String?>(null)
+        val nextTransportHint = MutableStateFlow<String?>(null)
         private var activeService: UsbService? = null
 
         fun disconnectReceiver() {
@@ -40,7 +41,7 @@ class UsbService : Service() {
     private fun startServer() {
         thread {
             try {
-                // Listen on a port that can be forwarded via ADB
+                // Listen on all interfaces for direct USB-tethering and Wi-Fi receiver sessions.
                 serverSocket = ServerSocket(5000)
                 Log.i("UsbService", "Server listening on port 5000")
 
@@ -65,7 +66,9 @@ class UsbService : Service() {
         thread {
             var desktopSession: com.example.universaldesktopapp.engine.DesktopSession? = null
             try {
-                val wirelessTransport = !socket.inetAddress.isLoopbackAddress
+                val transportHint = nextTransportHint.value
+                nextTransportHint.value = null
+                val wirelessTransport = transportHint != "USB" && !socket.inetAddress.isLoopbackAddress
                 socket.tcpNoDelay = true
                 socket.sendBufferSize = if (wirelessTransport) 192 * 1024 else 512 * 1024
                 val outputStream = java.io.DataOutputStream(socket.getOutputStream())
@@ -81,7 +84,7 @@ class UsbService : Service() {
                     if (clientSocket === socket) activeSession = desktopSession
                 }
                 isReceiverConnected.value = true
-                receiverTransport.value = if (wirelessTransport) "Wireless" else "USB"
+                receiverTransport.value = transportHint ?: if (wirelessTransport) "Wireless" else "USB"
                 desktopSession.startSession { frameData ->
                     try {
                         val packet = com.example.universaldesktopapp.protocol.Packet(

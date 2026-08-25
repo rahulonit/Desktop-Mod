@@ -61,7 +61,7 @@ public sealed class ReceiverForm : Form
         state.AutoSize = true;
         state.ForeColor = Color.FromArgb(148, 163, 184);
         state.Location = new Point(340, 25);
-        connect.Text = "Connect";
+        connect.Text = "Connection help";
         connect.AutoSize = true;
         connect.FlatStyle = FlatStyle.Flat;
         connect.BackColor = Color.FromArgb(37, 99, 235);
@@ -100,7 +100,7 @@ public sealed class ReceiverForm : Form
         footer.Height = 48;
         footer.BackColor = Color.FromArgb(17, 24, 39);
         footer.Padding = new Padding(18, 14, 18, 8);
-        telemetry.Text = "Connect your phone by USB, open Desktop Mod on the phone, then press Connect";
+        telemetry.Text = "Waiting for Desktop Mod on USB tethering or Wi-Fi";
         telemetry.AutoSize = true;
         telemetry.ForeColor = Color.FromArgb(148, 163, 184);
         footer.Controls.Add(telemetry);
@@ -140,7 +140,6 @@ public sealed class ReceiverForm : Form
         Shown += (_, _) =>
         {
             StartDiscoveryResponder();
-            ConnectToDevice();
         };
     }
 
@@ -203,10 +202,12 @@ public sealed class ReceiverForm : Form
             var bounds = viewport.ClientRectangle;
             e.Graphics.DrawString("Connect Desktop Mod", titleFont, Brushes.White, new RectangleF(0, bounds.Height / 2f - 95, bounds.Width, 50), center);
             e.Graphics.DrawString(
-                "1   Connect the Android phone with a USB data cable\n" +
-                "2   Enable Developer options and USB debugging on the phone\n" +
-                "3   Open Desktop Mod and accept the USB authorization prompt\n" +
-                "4   Click Connect above — setup and port forwarding are automatic\n\n" +
+                "USB without Developer Mode\n" +
+                "1   Connect a USB data cable and enable USB tethering on the phone\n" +
+                "2   Open Desktop Mod on both devices\n" +
+                "3   Select this PC on the phone and tap Connect\n\n" +
+                "Wi-Fi\n" +
+                "Join the same private network, select this PC on the phone, and tap Connect.\n" +
                 "Your phone stays usable. This is a separate desktop, not screen mirroring.",
                 bodyFont, Brushes.LightSlateGray, new RectangleF(60, bounds.Height / 2f - 25, bounds.Width - 120, 170), center);
         }
@@ -218,10 +219,17 @@ public sealed class ReceiverForm : Form
             connectionAttemptActive = false;
             Disconnect();
         }
-        else ConnectToDevice();
+        else MessageBox.Show(
+            this,
+            "Start the connection from the Desktop Mod app on your phone.\n\n" +
+            "For USB: connect a data cable, enable USB tethering, then select this PC.\n" +
+            "For Wi-Fi: connect both devices to the same private network, then select this PC.",
+            "Connect Desktop Mod",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information);
     }
 
-    private void ConnectToDevice(string host = "127.0.0.1", bool configureUsb = true)
+    private void ConnectToDevice(string host, string transportName)
     {
         connectionAttemptActive = true;
         state.Text = "● Connecting...";
@@ -232,21 +240,19 @@ public sealed class ReceiverForm : Form
         {
             try
             {
-                if (configureUsb) EnsureAdbForwarding();
-
                 // Establish the phone session before loading the comparatively heavy decoder runtime.
                 tcpClient = new TcpClient();
                 tcpClient.NoDelay = true;
-                tcpClient.ReceiveBufferSize = configureUsb ? 512 * 1024 : 192 * 1024;
+                tcpClient.ReceiveBufferSize = transportName == "USB" ? 512 * 1024 : 192 * 1024;
                 tcpClient.ConnectAsync(host, 5000).Wait(TimeSpan.FromSeconds(5));
                 if (!tcpClient.Connected)
                     throw new IOException("The phone did not accept the desktop connection within 5 seconds.");
                 isConnected = true;
                 BeginInvoke(() =>
                 {
-                    state.Text = configureUsb ? "● Phone connected • USB" : "● Phone connected • Wi-Fi";
+                    state.Text = $"● Phone connected • {transportName}";
                     state.ForeColor = Color.FromArgb(74, 222, 128);
-                    telemetry.Text = configureUsb ? "USB transport connected" : $"Wireless transport connected • {host}";
+                    telemetry.Text = $"{transportName} transport connected • {host}";
                 });
 
                 BeginInvoke(() =>
@@ -292,7 +298,7 @@ public sealed class ReceiverForm : Form
                     MessageBox.Show(
                         this,
                         $"Could not connect to the phone.\n\nReason: {reason}\n\n" +
-                        "Check the USB data cable, enable USB debugging, keep Desktop Mod open on the phone, and accept the authorization prompt. Port forwarding is configured automatically.",
+                        "Keep Desktop Mod open on the phone. For USB, verify USB tethering is enabled. For Wi-Fi, verify both devices are on the same private network.",
                         "Connection failed",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Error);
@@ -419,13 +425,14 @@ public sealed class ReceiverForm : Form
                         var response = Encoding.UTF8.GetBytes($"DESKTOP_MOD_RECEIVER_V1|{Environment.MachineName}|Windows|5000");
                         discoverySocket.Send(response, response.Length, endpoint);
                     }
-                    else if (message == "DESKTOP_MOD_START_V1")
+                    else if (message.StartsWith("DESKTOP_MOD_START_V1", StringComparison.Ordinal))
                     {
                         var phoneAddress = endpoint.Address.ToString();
+                        var requestedTransport = message.Split('|').ElementAtOrDefault(1) == "USB" ? "USB" : "Wi-Fi";
                         BeginInvoke(() =>
                         {
                             if (isConnected) Disconnect();
-                            ConnectToDevice(phoneAddress, configureUsb: false);
+                            ConnectToDevice(phoneAddress, requestedTransport);
                         });
                     }
                 }
@@ -525,10 +532,10 @@ public sealed class ReceiverForm : Form
         tcpClient = null;
         state.Text = "● Waiting for phone";
         state.ForeColor = Color.FromArgb(148, 163, 184);
-        connect.Text = "Connect";
+        connect.Text = "Connection help";
         connect.BackColor = Color.FromArgb(37, 99, 235);
         connect.Enabled = true;
-        telemetry.Text = "Connect your phone by USB, open Desktop Mod on the phone, then press Connect";
+        telemetry.Text = "Waiting for Desktop Mod on USB tethering or Wi-Fi";
 
         viewport.Image = null;
         lock (frameLock)
