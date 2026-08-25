@@ -16,6 +16,7 @@ import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,7 +39,12 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 private const val HOME_PAGE = "https://www.google.com"
-private data class BrowserTab(val id: Long, val title: String = "New tab", val url: String = HOME_PAGE)
+private data class BrowserTab(
+    val id: Long,
+    val title: String = "New tab",
+    val url: String = HOME_PAGE,
+    val zoom: Int = 100,
+)
 
 private fun browserTarget(input: String): String {
     val value = input.trim()
@@ -65,6 +71,7 @@ fun BrowserApp() {
     var desktopSite by remember { mutableStateOf(true) }
     var tabs by remember { mutableStateOf(listOf(BrowserTab(System.nanoTime()))) }
     var activeTabId by remember { mutableLongStateOf(tabs.first().id) }
+    var currentZoom by remember { mutableIntStateOf(100) }
     val bookmarks = remember { mutableStateListOf<Pair<String, String>>() }
     val focusManager = LocalFocusManager.current
 
@@ -84,24 +91,41 @@ fun BrowserApp() {
 
     fun newTab() {
         val tab = BrowserTab(System.nanoTime())
+        val previousZoom = currentZoom
         tabs = tabs + tab
         activeTabId = tab.id
         address = tab.url
         pageTitle = tab.title
+        currentZoom = 100
+        if (previousZoom != 100) webView?.zoomBy(100f / previousZoom)
         webView?.loadUrl(tab.url)
     }
 
     fun selectTab(tab: BrowserTab) {
         if (tab.id == activeTabId) return
+        val previousZoom = currentZoom
         activeTabId = tab.id
         address = tab.url
         pageTitle = tab.title
+        currentZoom = tab.zoom
+        if (previousZoom != tab.zoom) webView?.zoomBy(tab.zoom.toFloat() / previousZoom)
         webView?.loadUrl(tab.url)
+    }
+
+    fun setPageZoom(value: Int) {
+        val target = value.coerceIn(50, 200)
+        if (target == currentZoom) return
+        val previous = currentZoom
+        currentZoom = target
+        tabs = tabs.map { if (it.id == activeTabId) it.copy(zoom = target) else it }
+        webView?.zoomBy(target.toFloat() / previous)
     }
 
     fun closeTab(tab: BrowserTab) {
         if (tabs.size == 1) {
-            tabs = listOf(tab.copy(title = "New tab", url = HOME_PAGE))
+            if (currentZoom != 100) webView?.zoomBy(100f / currentZoom)
+            currentZoom = 100
+            tabs = listOf(tab.copy(title = "New tab", url = HOME_PAGE, zoom = 100))
             address = HOME_PAGE; pageTitle = "New tab"; webView?.loadUrl(HOME_PAGE)
             return
         }
@@ -186,29 +210,74 @@ fun BrowserApp() {
                         keyboardActions = KeyboardActions(onGo = { navigate() }),
                     )
                     Box {
-                        BrowserToolbarButton("...") { menuOpen = true }
-                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(text = { Text("New tab") }, onClick = { newTab(); menuOpen = false })
-                            DropdownMenuItem(text = { Text("Bookmark this page") }, onClick = {
-                                if (bookmarks.none { it.second == address }) bookmarks += pageTitle to address
-                                menuOpen = false
-                            })
-                            bookmarks.takeLast(5).forEach { bookmark ->
-                                DropdownMenuItem(text = { Text("★ ${bookmark.first}", maxLines = 1) }, onClick = { address = bookmark.second; webView?.loadUrl(bookmark.second); menuOpen = false })
-                            }
-                            HorizontalDivider()
-                            DropdownMenuItem(text = { Text("Find on page") }, onClick = { findOpen = true; menuOpen = false })
-                            DropdownMenuItem(text = { Text(if (desktopSite) "Use mobile site" else "Use desktop site") }, onClick = {
-                                desktopSite = !desktopSite
-                                webView?.settings?.userAgentString = if (desktopSite) DESKTOP_USER_AGENT else null
-                                webView?.reload()
-                                menuOpen = false
-                            })
-                            DropdownMenuItem(text = { Text("Clear browsing data") }, onClick = {
-                                webView?.clearHistory(); webView?.clearCache(true); CookieManager.getInstance().removeAllCookies(null)
-                                menuOpen = false
-                            })
+                        BrowserToolbarButton("...") { menuOpen = !menuOpen }
+                    }
+                }
+            }
+        }
+        if (menuOpen) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp,
+                shadowElevation = 8.dp,
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().heightIn(max = 300.dp)
+                        .verticalScroll(rememberScrollState()).padding(vertical = 6.dp),
+                ) {
+                    Text("Browser menu", Modifier.padding(horizontal = 16.dp, vertical = 6.dp), fontWeight = FontWeight.Bold)
+                    BrowserMenuItem("New tab") { newTab(); menuOpen = false }
+                    BrowserMenuItem("Bookmark this page") {
+                        if (bookmarks.none { it.second == address }) bookmarks += pageTitle to address
+                        menuOpen = false
+                    }
+                    bookmarks.takeLast(5).forEach { bookmark ->
+                        BrowserMenuItem("★ ${bookmark.first}") {
+                            address = bookmark.second
+                            tabs = tabs.map { if (it.id == activeTabId) it.copy(url = bookmark.second) else it }
+                            webView?.loadUrl(bookmark.second)
+                            menuOpen = false
                         }
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                    BrowserMenuItem("Find on page") { findOpen = true; menuOpen = false }
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Text("Page zoom", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            FilledTonalButton(
+                                onClick = { setPageZoom(currentZoom - 10) }, enabled = currentZoom > 50,
+                                modifier = Modifier.size(40.dp), contentPadding = PaddingValues(0.dp),
+                            ) { Text("−", style = MaterialTheme.typography.titleLarge) }
+                            Text("$currentZoom%", Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = FontWeight.Bold)
+                            FilledTonalButton(
+                                onClick = { setPageZoom(currentZoom + 10) }, enabled = currentZoom < 200,
+                                modifier = Modifier.size(40.dp), contentPadding = PaddingValues(0.dp),
+                            ) { Text("+", style = MaterialTheme.typography.titleLarge) }
+                            Spacer(Modifier.width(8.dp))
+                            OutlinedButton(onClick = { setPageZoom(100) }, enabled = currentZoom != 100) { Text("Reset to 100%") }
+                        }
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                    BrowserMenuItem(if (desktopSite) "Use mobile site" else "Use desktop site") {
+                        desktopSite = !desktopSite
+                        setPageZoom(100)
+                        webView?.apply {
+                            settings.userAgentString = if (desktopSite) DESKTOP_USER_AGENT else null
+                            settings.useWideViewPort = desktopSite
+                            settings.loadWithOverviewMode = desktopSite
+                            setInitialScale(if (desktopSite) 0 else 100)
+                            reload()
+                        }
+                        menuOpen = false
+                    }
+                    BrowserMenuItem("Clear browsing data") {
+                        webView?.clearHistory()
+                        webView?.clearCache(true)
+                        CookieManager.getInstance().removeAllCookies(null)
+                        canGoBack = false
+                        canGoForward = false
+                        menuOpen = false
                     }
                 }
             }
@@ -235,7 +304,9 @@ fun BrowserApp() {
                         domStorageEnabled = true
                         loadsImagesAutomatically = true
                         useWideViewPort = true
-                        loadWithOverviewMode = false
+                        loadWithOverviewMode = true
+                        layoutAlgorithm = WebSettings.LayoutAlgorithm.NORMAL
+                        textZoom = 100
                         builtInZoomControls = true
                         displayZoomControls = false
                         setSupportZoom(true)
@@ -244,6 +315,7 @@ fun BrowserApp() {
                         mediaPlaybackRequiresUserGesture = true
                         userAgentString = DESKTOP_USER_AGENT
                     }
+                    setInitialScale(0)
                     CookieManager.getInstance().apply {
                         setAcceptCookie(true)
                         setAcceptThirdPartyCookies(currentWebView, true)
@@ -316,7 +388,7 @@ fun BrowserApp() {
     }
 }
 
-private const val DESKTOP_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+private const val DESKTOP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 @Composable
 private fun BrowserToolbarButton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
@@ -327,4 +399,15 @@ private fun BrowserToolbarButton(label: String, enabled: Boolean = true, onClick
         contentPadding = PaddingValues(0.dp),
         shape = RoundedCornerShape(19.dp),
     ) { Text(label, fontWeight = FontWeight.Bold) }
+}
+
+@Composable
+private fun BrowserMenuItem(label: String, onClick: () -> Unit) {
+    Text(
+        text = label,
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        style = MaterialTheme.typography.bodyMedium,
+    )
 }

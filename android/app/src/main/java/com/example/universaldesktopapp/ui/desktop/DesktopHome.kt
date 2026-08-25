@@ -9,6 +9,7 @@ import android.provider.Settings
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -22,14 +23,14 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.zIndex
 import com.example.universaldesktopapp.engine.DesktopInputBus
 import com.example.universaldesktopapp.engine.DesktopMenuRequest
 import com.example.universaldesktopapp.ui.apps.BrowserApp
@@ -78,6 +79,7 @@ fun DesktopHome(isPcMode: Boolean = false) {
     var wallpaperStyle by remember { mutableIntStateOf(0) }
     var propertiesOpen by remember { mutableStateOf(false) }
     var newItemNumber by remember { mutableIntStateOf(1) }
+    var selectedDesktopApp by remember { mutableStateOf<String?>(null) }
     val mediaRequest by MediaOpenController.request.collectAsState()
     val apps = remember {
         mutableStateListOf(
@@ -163,22 +165,32 @@ fun DesktopHome(isPcMode: Boolean = false) {
             startOpen = false
             quickSettingsOpen = false
             desktopMenu = null
+            selectedDesktopApp = null
         })
         if (isPcMode) {
             LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                modifier = Modifier.width(190.dp).fillMaxHeight().padding(start = 18.dp, top = 18.dp, bottom = 64.dp),
+                columns = GridCells.Adaptive(minSize = listOf(68, 82, 104)[iconSize].dp),
+                modifier = Modifier.width(listOf(176, 210, 236)[iconSize].dp).fillMaxHeight().padding(start = 18.dp, top = 18.dp, bottom = 64.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 userScrollEnabled = false,
             ) {
                 items(displayedApps, key = { it.title }) { app ->
-                    DesktopShortcut(app, { openApp(app) }, compact = true, iconSize = listOf(28, 38, 50)[iconSize])
+                    DesktopShortcut(
+                        app = app,
+                        selected = selectedDesktopApp == app.title,
+                        onSelect = { selectedDesktopApp = app.title },
+                        onOpen = { openApp(app) },
+                        compact = true,
+                        iconSize = listOf(28, 38, 50)[iconSize],
+                    )
                 }
             }
         } else {
             Column(Modifier.padding(start = 24.dp, top = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                displayedApps.forEach { app -> DesktopShortcut(app, { openApp(app) }) }
+                displayedApps.forEach { app ->
+                    DesktopShortcut(app, selectedDesktopApp == app.title, { selectedDesktopApp = app.title }, { openApp(app) })
+                }
             }
         }
 
@@ -239,13 +251,37 @@ fun DesktopHome(isPcMode: Boolean = false) {
 }
 
 @Composable
-private fun DesktopShortcut(app: DesktopApp, onClick: () -> Unit, compact: Boolean = false, iconSize: Int? = null) {
+private fun DesktopShortcut(
+    app: DesktopApp,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onOpen: () -> Unit,
+    compact: Boolean = false,
+    iconSize: Int? = null,
+) {
     Column(
-        Modifier.width(if (compact) 76.dp else 86.dp).clip(MaterialTheme.shapes.small).clickable(onClick = onClick).padding(6.dp),
+        Modifier
+            .then(if (compact) Modifier.fillMaxWidth() else Modifier.width(86.dp))
+            .heightIn(min = ((iconSize ?: if (compact) 34 else 42) + 40).dp)
+            .clip(MaterialTheme.shapes.small)
+            .background(if (selected) Color.White.copy(alpha = .22f) else Color.Transparent)
+            .pointerInput(app.title) {
+                detectTapGestures(
+                    onTap = { onSelect() },
+                    onDoubleTap = { onSelect(); onOpen() },
+                )
+            }
+            .padding(6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         ShellIcon(app.icon, Modifier.size((iconSize ?: if (compact) 34 else 42).dp))
-        Text(app.title, color = Color.White, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(
+            app.title,
+            color = Color.White,
+            style = if ((iconSize ?: 42) <= 28) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -342,36 +378,34 @@ private fun DesktopContextMenu(
     onSettings: () -> Unit,
     onProperties: () -> Unit,
 ) {
-    Popup(
-        offset = IntOffset(request.x, request.y),
-        onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = true),
+    Card(
+        Modifier
+            .offset { IntOffset(request.x.coerceAtMost(1660), request.y.coerceAtMost(630)) }
+            .width(238.dp)
+            .zIndex(10_000f)
+            .shadow(22.dp, MaterialTheme.shapes.large),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .97f)),
+        shape = MaterialTheme.shapes.large,
     ) {
-        Card(
-            Modifier.width(238.dp).shadow(22.dp, MaterialTheme.shapes.large),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .97f)),
-            shape = MaterialTheme.shapes.large,
-        ) {
-            Column(Modifier.padding(vertical = 7.dp)) {
-                ContextMenuHeading("View")
-                ContextMenuItem("Small icons") { onIconSize(0); onDismiss() }
-                ContextMenuItem("Medium icons") { onIconSize(1); onDismiss() }
-                ContextMenuItem("Large icons") { onIconSize(2); onDismiss() }
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                ContextMenuHeading("Sort by")
-                ContextMenuItem("Name") { onSort(0); onDismiss() }
-                ContextMenuItem("Type") { onSort(1); onDismiss() }
-                ContextMenuItem("Date created") { onSort(2); onDismiss() }
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                ContextMenuItem("Refresh", onRefresh)
-                ContextMenuItem("New folder", onNewFolder)
-                ContextMenuItem("New text document", onNewText)
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                ContextMenuItem("Change wallpaper", onWallpaper)
-                ContextMenuItem("Display settings", onSettings)
-                ContextMenuItem("Personalize", onSettings)
-                ContextMenuItem("Properties", onProperties)
-            }
+        Column(Modifier.padding(vertical = 7.dp)) {
+            ContextMenuHeading("View")
+            ContextMenuItem("Small icons") { onIconSize(0); onDismiss() }
+            ContextMenuItem("Medium icons") { onIconSize(1); onDismiss() }
+            ContextMenuItem("Large icons") { onIconSize(2); onDismiss() }
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            ContextMenuHeading("Sort by")
+            ContextMenuItem("Name") { onSort(0); onDismiss() }
+            ContextMenuItem("Type") { onSort(1); onDismiss() }
+            ContextMenuItem("Date created") { onSort(2); onDismiss() }
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            ContextMenuItem("Refresh", onRefresh)
+            ContextMenuItem("New folder", onNewFolder)
+            ContextMenuItem("New text document", onNewText)
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            ContextMenuItem("Change wallpaper", onWallpaper)
+            ContextMenuItem("Display settings", onSettings)
+            ContextMenuItem("Personalize", onSettings)
+            ContextMenuItem("Properties", onProperties)
         }
     }
 }
@@ -387,14 +421,17 @@ private fun DesktopContextMenu(
 @Composable
 internal fun ShellIcon(key: String, modifier: Modifier = Modifier, fallbackColor: Color = Ink) {
     val resource = when (key) {
-        "files" -> R.drawable.desktop_files
-        "browser" -> R.drawable.desktop_browser_modern
-        "notes" -> R.drawable.desktop_notes
-        "phone" -> R.drawable.desktop_phone
-        "image" -> R.drawable.explorer_picture
-        "video" -> R.drawable.explorer_video
-        "audio" -> R.drawable.explorer_audio
-        "search" -> R.drawable.desktop_search
+        "files" -> R.drawable.desktop_files_asset
+        "browser" -> R.drawable.desktop_browser_asset
+        "notes" -> R.drawable.desktop_notes_asset
+        "phone" -> R.drawable.desktop_phone_asset
+        "image" -> R.drawable.desktop_image_asset
+        "video" -> R.drawable.desktop_video_asset
+        "audio" -> R.drawable.desktop_audio_asset
+        "calculator" -> R.drawable.desktop_calculator_asset
+        "clock" -> R.drawable.desktop_clock_asset
+        "settings" -> R.drawable.desktop_settings_asset
+        "search" -> R.drawable.desktop_search_asset
         "start" -> R.drawable.desktop_start
         else -> null
     }

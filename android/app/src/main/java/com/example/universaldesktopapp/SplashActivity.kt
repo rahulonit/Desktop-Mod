@@ -5,18 +5,13 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.SurfaceTexture
 import android.media.MediaPlayer
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.Surface
 import android.view.TextureView
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.widget.FrameLayout
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 
 class SplashActivity : Activity(), TextureView.SurfaceTextureListener {
     private val handler = Handler(Looper.getMainLooper())
@@ -27,8 +22,6 @@ class SplashActivity : Activity(), TextureView.SurfaceTextureListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        configureFullscreen()
-
         textureView = TextureView(this).apply {
             surfaceTextureListener = this@SplashActivity
             layoutParams = FrameLayout.LayoutParams(
@@ -43,23 +36,6 @@ class SplashActivity : Activity(), TextureView.SurfaceTextureListener {
             addView(textureView)
         })
         handler.postDelayed(fallback, 10_000L)
-    }
-
-    private fun configureFullscreen() {
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            window.attributes = window.attributes.apply {
-                layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-                } else {
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                }
-            }
-        }
-        WindowCompat.getInsetsController(window, window.decorView).apply {
-            hide(WindowInsetsCompat.Type.systemBars())
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        }
     }
 
     override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
@@ -125,11 +101,6 @@ class SplashActivity : Activity(), TextureView.SurfaceTextureListener {
             release()
         }
         player = null
-    }
-
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) configureFullscreen()
     }
 
     override fun onDestroy() {

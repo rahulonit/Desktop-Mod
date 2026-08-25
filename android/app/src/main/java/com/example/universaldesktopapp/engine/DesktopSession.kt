@@ -23,13 +23,16 @@ class DesktopSession(
     private val displayManager: DisplayManager,
     private val width: Int = 1920,
     private val height: Int = 1080,
-    private val densityDpi: Int = 160
+    private val densityDpi: Int = 160,
+    private val jpegQuality: Int = 94,
+    private val maxFramesPerSecond: Int = 60,
 ) {
     private var virtualDisplay: VirtualDisplay? = null
     private var presentation: DesktopPresentation? = null
     private var imageReader: ImageReader? = null
     private var captureThread: HandlerThread? = null
     @Volatile private var isStreaming = false
+    private var lastEncodedFrameAt = 0L
 
     fun startSession(onFrameReady: (ByteArray) -> Unit) {
         if (isStreaming) return
@@ -44,6 +47,10 @@ class DesktopSession(
             val image = source.acquireLatestImage() ?: return@setOnImageAvailableListener
             try {
                 if (!isStreaming) return@setOnImageAvailableListener
+                val now = android.os.SystemClock.elapsedRealtime()
+                val minimumFrameInterval = 1_000L / maxFramesPerSecond.coerceAtLeast(1)
+                if (now - lastEncodedFrameAt < minimumFrameInterval) return@setOnImageAvailableListener
+                lastEncodedFrameAt = now
 
                 val plane = image.planes[0]
                 val pixelStride = plane.pixelStride
@@ -55,7 +62,7 @@ class DesktopSession(
                     else Bitmap.createBitmap(padded, 0, 0, width, height)
 
                 val bytes = ByteArrayOutputStream().use { output ->
-                    frame.compress(Bitmap.CompressFormat.JPEG, 94, output)
+                    frame.compress(Bitmap.CompressFormat.JPEG, jpegQuality.coerceIn(55, 96), output)
                     output.toByteArray()
                 }
                 if (frame !== padded) frame.recycle()

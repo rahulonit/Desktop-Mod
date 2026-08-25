@@ -2,6 +2,8 @@ using System.Drawing;
 using System.Diagnostics;
 using System.Buffers.Binary;
 using System.Net.Sockets;
+using System.Net;
+using System.Text;
 using UniversalMobileDesktop.Protocol;
 
 namespace UniversalMobileDesktop.Receiver;
@@ -30,6 +32,13 @@ public sealed class ReceiverForm : Form
     private bool isFullscreen;
     private FormWindowState previousWindowState;
     private FormBorderStyle previousBorderStyle;
+    private UdpClient? discoverySocket;
+    private Thread? discoveryThread;
+    private volatile bool discoveryRunning;
+    private const int DiscoveryPort = 50505;
+    private readonly object frameLock = new();
+    private Bitmap? latestFrame;
+    private int renderPending;
 
     public ReceiverForm()
     {
@@ -91,7 +100,7 @@ public sealed class ReceiverForm : Form
         footer.Height = 48;
         footer.BackColor = Color.FromArgb(17, 24, 39);
         footer.Padding = new Padding(18, 14, 18, 8);
-        telemetry.Text = "No active session • Run: adb forward tcp:5000 tcp:5000";
+        telemetry.Text = "Connect your phone by USB, open Desktop Mod on the phone, then press Connect";
         telemetry.AutoSize = true;
         telemetry.ForeColor = Color.FromArgb(148, 163, 184);
         footer.Controls.Add(telemetry);
@@ -128,7 +137,11 @@ public sealed class ReceiverForm : Form
 
         // Draw initial placeholder text
         viewport.Paint += PaintPlaceholder;
-        Shown += (_, _) => ConnectToDevice();
+        Shown += (_, _) =>
+        {
+            StartDiscoveryResponder();
+            ConnectToDevice();
+        };
     }
 
     private void PositionHeaderButtons()
@@ -188,13 +201,14 @@ public sealed class ReceiverForm : Form
             using var bodyFont = new Font("Segoe UI", 11);
             var center = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
             var bounds = viewport.ClientRectangle;
-            e.Graphics.DrawString("Connect your phone", titleFont, Brushes.White, new RectangleF(0, bounds.Height / 2f - 75, bounds.Width, 50), center);
+            e.Graphics.DrawString("Connect Desktop Mod", titleFont, Brushes.White, new RectangleF(0, bounds.Height / 2f - 95, bounds.Width, 50), center);
             e.Graphics.DrawString(
-                "Step 1: Connect phone via USB and enable USB debugging\n" +
-                "Step 2: Run in terminal: adb forward tcp:5000 tcp:5000\n" +
-                "Step 3: Launch the Desktop Mod app on your phone\n" +
-                "Step 4: Click \"Connect\" above",
-                bodyFont, Brushes.LightSlateGray, new RectangleF(60, bounds.Height / 2f - 10, bounds.Width - 120, 120), center);
+                "1   Connect the Android phone with a USB data cable\n" +
+                "2   Enable Developer options and USB debugging on the phone\n" +
+                "3   Open Desktop Mod and accept the USB authorization prompt\n" +
+                "4   Click Connect above — setup and port forwarding are automatic\n\n" +
+                "Your phone stays usable. This is a separate desktop, not screen mirroring.",
+                bodyFont, Brushes.LightSlateGray, new RectangleF(60, bounds.Height / 2f - 25, bounds.Width - 120, 170), center);
         }
     }
 
@@ -207,7 +221,7 @@ public sealed class ReceiverForm : Form
         else ConnectToDevice();
     }
 
-    private void ConnectToDevice()
+    private void ConnectToDevice(string host = "127.0.0.1", bool configureUsb = true)
     {
         connectionAttemptActive = true;
         state.Text = "● Connecting...";
@@ -218,19 +232,21 @@ public sealed class ReceiverForm : Form
         {
             try
             {
-                EnsureAdbForwarding();
+                if (configureUsb) EnsureAdbForwarding();
 
                 // Establish the phone session before loading the comparatively heavy decoder runtime.
                 tcpClient = new TcpClient();
-                tcpClient.ConnectAsync("127.0.0.1", 5000).Wait(TimeSpan.FromSeconds(5));
+                tcpClient.NoDelay = true;
+                tcpClient.ReceiveBufferSize = configureUsb ? 512 * 1024 : 192 * 1024;
+                tcpClient.ConnectAsync(host, 5000).Wait(TimeSpan.FromSeconds(5));
                 if (!tcpClient.Connected)
                     throw new IOException("The phone did not accept the desktop connection within 5 seconds.");
                 isConnected = true;
                 BeginInvoke(() =>
                 {
-                    state.Text = "● Phone connected • transport mode";
+                    state.Text = configureUsb ? "● Phone connected • USB" : "● Phone connected • Wi-Fi";
                     state.ForeColor = Color.FromArgb(74, 222, 128);
-                    telemetry.Text = "USB transport connected";
+                    telemetry.Text = configureUsb ? "USB transport connected" : $"Wireless transport connected • {host}";
                 });
 
                 BeginInvoke(() =>
@@ -276,7 +292,7 @@ public sealed class ReceiverForm : Form
                     MessageBox.Show(
                         this,
                         $"Could not connect to the phone.\n\nReason: {reason}\n\n" +
-                        "Check that the mobile app is open, the USB cable is connected, and ADB forwarding is active, then try again.",
+                        "Check the USB data cable, enable USB debugging, keep Desktop Mod open on the phone, and accept the authorization prompt. Port forwarding is configured automatically.",
                         "Connection failed",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Error);
@@ -294,16 +310,36 @@ public sealed class ReceiverForm : Form
             using var stream = new MemoryStream(jpegData, writable: false);
             using var decoded = Image.FromStream(stream);
             var frame = new Bitmap(decoded);
-            BeginInvoke(() =>
+            lock (frameLock)
             {
-                var previous = viewport.Image;
-                viewport.Image = frame;
-                previous?.Dispose();
-            });
+                latestFrame?.Dispose();
+                latestFrame = frame;
+            }
+            if (Interlocked.Exchange(ref renderPending, 1) != 0) return;
+            BeginInvoke(() => RenderLatestFrame());
         }
         catch (Exception error)
         {
             BeginInvoke(() => telemetry.Text = $"Frame decode failed: {error.Message}");
+        }
+    }
+
+    private void RenderLatestFrame()
+    {
+        Bitmap? frame;
+        lock (frameLock)
+        {
+            frame = latestFrame;
+            latestFrame = null;
+        }
+        var previous = viewport.Image;
+        viewport.Image = frame;
+        previous?.Dispose();
+        Interlocked.Exchange(ref renderPending, 0);
+        lock (frameLock)
+        {
+            if (latestFrame is not null && Interlocked.Exchange(ref renderPending, 1) == 0)
+                BeginInvoke(() => RenderLatestFrame());
         }
     }
 
@@ -363,6 +399,46 @@ public sealed class ReceiverForm : Form
         >= Keys.D0 and <= Keys.D9 => 7 + (key - Keys.D0),
         _ => -1
     };
+
+    private void StartDiscoveryResponder()
+    {
+        if (discoveryRunning) return;
+        discoveryRunning = true;
+        discoveryThread = new Thread(() =>
+        {
+            try
+            {
+                discoverySocket = new UdpClient(DiscoveryPort) { EnableBroadcast = true };
+                while (discoveryRunning)
+                {
+                    var endpoint = new IPEndPoint(IPAddress.Any, 0);
+                    var bytes = discoverySocket.Receive(ref endpoint);
+                    var message = Encoding.UTF8.GetString(bytes);
+                    if (message == "DESKTOP_MOD_DISCOVER_V1")
+                    {
+                        var response = Encoding.UTF8.GetBytes($"DESKTOP_MOD_RECEIVER_V1|{Environment.MachineName}|Windows|5000");
+                        discoverySocket.Send(response, response.Length, endpoint);
+                    }
+                    else if (message == "DESKTOP_MOD_START_V1")
+                    {
+                        var phoneAddress = endpoint.Address.ToString();
+                        BeginInvoke(() =>
+                        {
+                            if (isConnected) Disconnect();
+                            ConnectToDevice(phoneAddress, configureUsb: false);
+                        });
+                    }
+                }
+            }
+            catch (SocketException) when (!discoveryRunning) { }
+            catch (ObjectDisposedException) { }
+            catch (Exception error)
+            {
+                if (discoveryRunning) BeginInvoke(() => telemetry.Text = $"Wireless discovery unavailable: {error.Message}");
+            }
+        }) { IsBackground = true, Name = "DesktopModDiscovery" };
+        discoveryThread.Start();
+    }
 
     private static void EnsureAdbForwarding()
     {
@@ -452,15 +528,24 @@ public sealed class ReceiverForm : Form
         connect.Text = "Connect";
         connect.BackColor = Color.FromArgb(37, 99, 235);
         connect.Enabled = true;
-        telemetry.Text = "No active session • Run: adb forward tcp:5000 tcp:5000";
+        telemetry.Text = "Connect your phone by USB, open Desktop Mod on the phone, then press Connect";
 
         viewport.Image = null;
+        lock (frameLock)
+        {
+            latestFrame?.Dispose();
+            latestFrame = null;
+        }
+        Interlocked.Exchange(ref renderPending, 0);
         viewport.Paint += PaintPlaceholder;
         viewport.Invalidate();
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        discoveryRunning = false;
+        discoverySocket?.Close();
+        discoverySocket = null;
         Disconnect();
         base.OnFormClosed(e);
     }

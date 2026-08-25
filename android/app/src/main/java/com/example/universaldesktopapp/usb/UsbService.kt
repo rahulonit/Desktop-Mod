@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 class UsbService : Service() {
     companion object {
         val isReceiverConnected = MutableStateFlow(false)
+        val receiverTransport = MutableStateFlow<String?>(null)
         private var activeService: UsbService? = null
 
         fun disconnectReceiver() {
@@ -64,14 +65,23 @@ class UsbService : Service() {
         thread {
             var desktopSession: com.example.universaldesktopapp.engine.DesktopSession? = null
             try {
+                val wirelessTransport = !socket.inetAddress.isLoopbackAddress
+                socket.tcpNoDelay = true
+                socket.sendBufferSize = if (wirelessTransport) 192 * 1024 else 512 * 1024
                 val outputStream = java.io.DataOutputStream(socket.getOutputStream())
                 val displayManager = getSystemService(android.content.Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
                 
-                desktopSession = com.example.universaldesktopapp.engine.DesktopSession(this, displayManager)
+                desktopSession = com.example.universaldesktopapp.engine.DesktopSession(
+                    context = this,
+                    displayManager = displayManager,
+                    jpegQuality = if (wirelessTransport) 76 else 94,
+                    maxFramesPerSecond = if (wirelessTransport) 24 else 60,
+                )
                 synchronized(clientLock) {
                     if (clientSocket === socket) activeSession = desktopSession
                 }
                 isReceiverConnected.value = true
+                receiverTransport.value = if (wirelessTransport) "Wireless" else "USB"
                 desktopSession.startSession { frameData ->
                     try {
                         val packet = com.example.universaldesktopapp.protocol.Packet(
@@ -100,6 +110,7 @@ class UsbService : Service() {
                         clientSocket = null
                         activeSession = null
                         isReceiverConnected.value = false
+                        receiverTransport.value = null
                     }
                 }
             }
@@ -113,6 +124,7 @@ class UsbService : Service() {
         clientSocket?.close()
         activeSession?.stopSession()
         isReceiverConnected.value = false
+        receiverTransport.value = null
         super.onDestroy()
     }
 
@@ -123,6 +135,7 @@ class UsbService : Service() {
             clientSocket = null
             activeSession = null
             isReceiverConnected.value = false
+            receiverTransport.value = null
         }
     }
 }
