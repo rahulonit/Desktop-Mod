@@ -12,6 +12,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 class UsbService : Service() {
     companion object {
         val isReceiverConnected = MutableStateFlow(false)
+        private var activeService: UsbService? = null
+
+        fun disconnectReceiver() {
+            activeService?.closeReceiverSession()
+        }
     }
 
     private var serverSocket: ServerSocket? = null
@@ -23,6 +28,7 @@ class UsbService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        activeService = this
         if (!isRunning) {
             isRunning = true
             startServer()
@@ -79,7 +85,11 @@ class UsbService : Service() {
                     }
                 }
                 
-                socket.getInputStream().read()
+                val inputStream = java.io.DataInputStream(socket.getInputStream())
+                while (!socket.isClosed) {
+                    val packet = com.example.universaldesktopapp.protocol.Packet.deserialize(inputStream) ?: break
+                    desktopSession.handleInput(packet)
+                }
             } catch (e: Exception) {
                 if (!socket.isClosed) Log.e("UsbService", "Client error", e)
             } finally {
@@ -97,11 +107,22 @@ class UsbService : Service() {
     }
 
     override fun onDestroy() {
+        if (activeService === this) activeService = null
         isRunning = false
         serverSocket?.close()
         clientSocket?.close()
         activeSession?.stopSession()
         isReceiverConnected.value = false
         super.onDestroy()
+    }
+
+    private fun closeReceiverSession() {
+        synchronized(clientLock) {
+            clientSocket?.close()
+            activeSession?.stopSession()
+            clientSocket = null
+            activeSession = null
+            isReceiverConnected.value = false
+        }
     }
 }

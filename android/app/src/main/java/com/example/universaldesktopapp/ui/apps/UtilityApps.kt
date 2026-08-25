@@ -2,11 +2,6 @@ package com.example.universaldesktopapp.ui.apps
 
 import android.media.MediaPlayer
 import android.net.Uri
-import android.os.Handler
-import android.os.Looper
-import android.provider.Settings
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -24,6 +19,7 @@ import com.example.universaldesktopapp.theme.ThemeMode
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.io.File
 
 @Composable
 fun CalculatorApp() {
@@ -75,16 +71,17 @@ fun ClockApp() {
 }
 
 @Composable
-fun AudioPlayerApp() {
+fun AudioPlayerApp(initialFile: File? = null) {
     val context = LocalContext.current
-    var source by remember { mutableStateOf<Uri?>(null) }
-    var title by remember { mutableStateOf("No audio selected") }
+    var source by remember(initialFile) { mutableStateOf(initialFile?.let(Uri::fromFile)) }
+    var title by remember(initialFile) { mutableStateOf(initialFile?.name ?: "No audio selected") }
     var playing by remember { mutableStateOf(false) }
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
+
+    LaunchedEffect(source) {
+        source?.let { uri ->
             runCatching { player?.release() }
-            source = uri; title = uri.lastPathSegment ?: "Audio"
+            title = uri.lastPathSegment ?: "Audio"
             player = MediaPlayer.create(context, uri)?.apply { setOnCompletionListener { playing = false } }
             playing = false
         }
@@ -94,7 +91,6 @@ fun AudioPlayerApp() {
         Text("♫", style = MaterialTheme.typography.displayLarge)
         Text(title, style = MaterialTheme.typography.titleMedium)
         Row(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = { picker.launch(arrayOf("audio/*")) }) { Text("Open audio") }
             Button(onClick = { player?.let { if (playing) it.pause() else it.start(); playing = !playing } }, enabled = player != null) { Text(if (playing) "Pause" else "Play") }
             OutlinedButton(onClick = { player?.seekTo(0); player?.pause(); playing = false }, enabled = player != null) { Text("Stop") }
         }
@@ -114,8 +110,8 @@ fun DesktopSettingsApp() {
             }
         }
         HorizontalDivider()
-        Text("Android controls", style = MaterialTheme.typography.titleMedium)
-        Button(onClick = { context.startActivity(android.content.Intent(Settings.ACTION_SETTINGS)) }) { Text("Open system settings") }
+        Text("Phone controls", style = MaterialTheme.typography.titleMedium)
+        Text("Android permissions and system settings stay on the phone host screen.", style = MaterialTheme.typography.bodySmall)
         Text("System mode follows the phone theme and Android 12+ dynamic colors.", style = MaterialTheme.typography.bodySmall)
     }
 }

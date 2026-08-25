@@ -3,8 +3,6 @@ package com.example.universaldesktopapp.ui.apps
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -34,7 +32,6 @@ fun ImagePreviewApp(initialFile: File? = null) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { if (it != null) source = it }
 
     LaunchedEffect(source) {
         bitmap = null; error = null; scale = 1f; offsetX = 0f; offsetY = 0f
@@ -55,7 +52,6 @@ fun ImagePreviewApp(initialFile: File? = null) {
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = { picker.launch(arrayOf("image/*", "image/x-icon")) }) { Text("Open image") }
             Text(source?.lastPathSegment ?: "Image Preview", Modifier.padding(start = 12.dp).weight(1f), maxLines = 1)
             TextButton(onClick = { scale = 1f; offsetX = 0f; offsetY = 0f }) { Text("Reset") }
             Text("${(scale * 100).toInt()}%")
@@ -73,7 +69,7 @@ fun ImagePreviewApp(initialFile: File? = null) {
                     contentScale = ContentScale.Fit,
                 )
             }
-            if (source == null) Text("Choose an image to preview", color = Color.White)
+            if (source == null) Text("Open an image from File Explorer", color = Color.White)
             error?.let { Text(it, color = Color(0xFFFFB4AB)) }
         }
     }

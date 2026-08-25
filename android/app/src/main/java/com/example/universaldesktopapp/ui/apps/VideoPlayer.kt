@@ -3,8 +3,6 @@ package com.example.universaldesktopapp.ui.apps
 import android.net.Uri
 import android.widget.MediaController
 import android.widget.VideoView
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -23,7 +21,6 @@ fun VideoPlayerApp(initialFile: File? = null) {
     var source by remember(initialFile) { mutableStateOf(initialFile?.let(Uri::fromFile)) }
     var error by remember { mutableStateOf<String?>(null) }
     var videoView by remember { mutableStateOf<VideoView?>(null) }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { if (it != null) { source = it; error = null } }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -43,8 +40,7 @@ fun VideoPlayerApp(initialFile: File? = null) {
             }, update = { view -> source?.let { if (view.tag != it) { view.tag = it; view.setVideoURI(it); view.start() } } }, modifier = Modifier.fillMaxSize())
             if (source == null) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Choose an MP4, MKV, WebM, MOV or other video", color = Color.White)
-                    Button(onClick = { picker.launch(arrayOf("video/*")) }, modifier = Modifier.padding(top = 12.dp)) { Text("Open video") }
+                    Text("Open a video from File Explorer", color = Color.White)
                 }
             }
             error?.let { Text(it, color = Color(0xFFFFB4AB)) }

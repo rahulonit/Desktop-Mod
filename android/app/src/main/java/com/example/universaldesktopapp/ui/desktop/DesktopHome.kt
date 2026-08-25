@@ -27,6 +27,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import com.example.universaldesktopapp.engine.DesktopInputBus
+import com.example.universaldesktopapp.engine.DesktopMenuRequest
 import com.example.universaldesktopapp.ui.apps.BrowserApp
 import com.example.universaldesktopapp.ui.apps.FileManagerApp
 import com.example.universaldesktopapp.ui.apps.NotesApp
@@ -45,15 +50,21 @@ import com.example.universaldesktopapp.theme.ThemeMode
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
 
-private data class DesktopApp(val title: String, val icon: String, val content: @Composable () -> Unit)
+private data class DesktopApp(
+    val title: String,
+    val icon: String,
+    val createdAt: Long = System.nanoTime(),
+    val content: @Composable () -> Unit,
+)
 
 private val WinBlue = Color(0xFF0067C0)
 private val Glass: Color @Composable get() = MaterialTheme.colorScheme.surface.copy(alpha = .94f)
 private val Ink: Color @Composable get() = MaterialTheme.colorScheme.onSurface
 
 @Composable
-fun DesktopHome() {
+fun DesktopHome(isPcMode: Boolean = false) {
     val context = LocalContext.current
     val usbConnected by UsbService.isReceiverConnected.collectAsState()
     val windows = remember { mutableStateListOf<WindowState>() }
@@ -61,9 +72,15 @@ fun DesktopHome() {
     var quickSettingsOpen by remember { mutableStateOf(false) }
     var controllerOpen by remember { mutableStateOf(false) }
     var nextZ by remember { mutableIntStateOf(1) }
+    var desktopMenu by remember { mutableStateOf<DesktopMenuRequest?>(null) }
+    var iconSize by remember { mutableIntStateOf(1) }
+    var sortMode by remember { mutableIntStateOf(0) }
+    var wallpaperStyle by remember { mutableIntStateOf(0) }
+    var propertiesOpen by remember { mutableStateOf(false) }
+    var newItemNumber by remember { mutableIntStateOf(1) }
     val mediaRequest by MediaOpenController.request.collectAsState()
     val apps = remember {
-        listOf(
+        mutableStateListOf(
             DesktopApp("File Explorer", "files") { FileManagerApp() },
             DesktopApp("Browser", "browser") { BrowserApp() },
             DesktopApp("Notepad", "notes") { NotesApp() },
@@ -75,6 +92,11 @@ fun DesktopHome() {
             DesktopApp("Clock", "clock") { ClockApp() },
             DesktopApp("Settings", "settings") { DesktopSettingsApp() },
         )
+    }
+    val displayedApps = when (sortMode) {
+        1 -> apps.sortedWith(compareBy<DesktopApp> { it.icon }.thenBy { it.title })
+        2 -> apps.sortedByDescending { it.createdAt }
+        else -> apps.sortedBy { it.title }
     }
 
     fun openApp(app: DesktopApp) {
@@ -97,16 +119,23 @@ fun DesktopHome() {
             nextZ++
             windows += WindowState(
                 title = request.file.name,
-                icon = if (request.kind == MediaKind.IMAGE) "image" else "video",
+                icon = when (request.kind) { MediaKind.IMAGE -> "image"; MediaKind.VIDEO -> "video"; MediaKind.AUDIO -> "audio" },
                 zIndex = nextZ,
                 width = 720f,
                 height = 480f,
                 content = {
-                    if (request.kind == MediaKind.IMAGE) ImagePreviewApp(request.file) else VideoPlayerApp(request.file)
+                    when (request.kind) {
+                        MediaKind.IMAGE -> ImagePreviewApp(request.file)
+                        MediaKind.VIDEO -> VideoPlayerApp(request.file)
+                        MediaKind.AUDIO -> AudioPlayerApp(request.file)
+                    }
                 },
             )
             MediaOpenController.consumed(request)
         }
+    }
+    LaunchedEffect(isPcMode) {
+        if (isPcMode) DesktopInputBus.menuRequests.collect { desktopMenu = it }
     }
 
     Box(
@@ -116,19 +145,41 @@ fun DesktopHome() {
             ),
         ),
     ) {
-        Image(
-            painter = painterResource(R.drawable.desktop_wallpaper),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
+        if (wallpaperStyle == 0) {
+            Image(
+                painter = painterResource(R.drawable.desktop_wallpaper),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else Box(
+            Modifier.fillMaxSize().background(
+                if (wallpaperStyle == 1) Brush.linearGradient(listOf(Color(0xFF071A35), Color(0xFF0067C0), Color(0xFF8FD3FF)))
+                else Brush.linearGradient(listOf(Color(0xFF25134D), Color(0xFF6A3BB5), Color(0xFFE69ACB)))
+            )
         )
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .12f)))
         Box(Modifier.fillMaxSize().clickable {
             startOpen = false
             quickSettingsOpen = false
+            desktopMenu = null
         })
-        Column(Modifier.padding(start = 24.dp, top = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            apps.forEach { app -> DesktopShortcut(app, { openApp(app) }) }
+        if (isPcMode) {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                modifier = Modifier.width(190.dp).fillMaxHeight().padding(start = 18.dp, top = 18.dp, bottom = 64.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                userScrollEnabled = false,
+            ) {
+                items(displayedApps, key = { it.title }) { app ->
+                    DesktopShortcut(app, { openApp(app) }, compact = true, iconSize = listOf(28, 38, 50)[iconSize])
+                }
+            }
+        } else {
+            Column(Modifier.padding(start = 24.dp, top = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                displayedApps.forEach { app -> DesktopShortcut(app, { openApp(app) }) }
+            }
         }
 
         WindowManager(windows, ::updateWindow) { closing -> windows.removeAll { it.id == closing.id } }
@@ -152,19 +203,48 @@ fun DesktopHome() {
             onWindow = ::updateWindow,
             onQuickSettings = { quickSettingsOpen = !quickSettingsOpen; startOpen = false },
             onController = { controllerOpen = true },
+            onPinned = { icon -> apps.firstOrNull { it.icon == icon }?.let(::openApp) },
             modifier = Modifier.align(Alignment.BottomCenter),
         )
         if (controllerOpen) ControllerSheet(usbConnected) { controllerOpen = false }
+        desktopMenu?.let { request ->
+            DesktopContextMenu(
+                request = request,
+                onDismiss = { desktopMenu = null },
+                onIconSize = { iconSize = it },
+                onSort = { sortMode = it },
+                onRefresh = { desktopMenu = null },
+                onNewFolder = {
+                    val number = newItemNumber++
+                    apps += DesktopApp("New Folder $number", "files") { FileManagerApp() }
+                    desktopMenu = null
+                },
+                onNewText = {
+                    val number = newItemNumber++
+                    apps += DesktopApp("New Text Document $number", "notes") { NotesApp() }
+                    desktopMenu = null
+                },
+                onWallpaper = { wallpaperStyle = (wallpaperStyle + 1) % 3; desktopMenu = null },
+                onSettings = { apps.firstOrNull { it.title == "Settings" }?.let(::openApp); desktopMenu = null },
+                onProperties = { propertiesOpen = true; desktopMenu = null },
+            )
+        }
+        if (propertiesOpen) AlertDialog(
+            onDismissRequest = { propertiesOpen = false },
+            confirmButton = { TextButton({ propertiesOpen = false }) { Text("OK") } },
+            title = { Text("Desktop properties") },
+            text = { Text("Desktop Mod\n1920 × 1080 workspace\nWindows-style independent phone desktop\nMouse, keyboard, resize, snap and full-screen enabled") },
+        )
     }
 }
 
 @Composable
-private fun DesktopShortcut(app: DesktopApp, onClick: () -> Unit) {
+private fun DesktopShortcut(app: DesktopApp, onClick: () -> Unit, compact: Boolean = false, iconSize: Int? = null) {
     Column(
-        Modifier.width(86.dp).clip(MaterialTheme.shapes.small).clickable(onClick = onClick).padding(6.dp),
+        Modifier.width(if (compact) 76.dp else 86.dp).clip(MaterialTheme.shapes.small).clickable(onClick = onClick).padding(6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        ShellIcon(app.icon, Modifier.size(42.dp))
+        ShellIcon(app.icon, Modifier.size((iconSize ?: if (compact) 34 else 42).dp))
         Text(app.title, color = Color.White, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
@@ -203,10 +283,18 @@ private fun StartMenu(onInstalledApp: (LaunchableApp) -> Unit, modifier: Modifie
 private fun WindowsTaskbar(
     windows: List<WindowState>, onStart: () -> Unit,
     onWindow: (WindowState) -> Unit, onQuickSettings: () -> Unit, onController: () -> Unit,
+    onPinned: (String) -> Unit,
     modifier: Modifier,
 ) {
-    val time = remember { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()) }
-    val date = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date()) }
+    var now by remember { mutableStateOf(Date()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1_000L)
+            now = Date()
+        }
+    }
+    val time = remember(now) { SimpleDateFormat("HH:mm", Locale.getDefault()).format(now) }
+    val date = remember(now) { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(now) }
     Box(
         modifier.fillMaxWidth().height(58.dp)
             .background(MaterialTheme.colorScheme.surface.copy(alpha = .94f))
@@ -214,9 +302,14 @@ private fun WindowsTaskbar(
     ) {
         Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
             TaskbarIcon("start", onStart, WinBlue)
-            TaskbarIcon("search", {}, Ink)
-            windows.take(5).forEach { window -> TaskbarIcon(window.icon, { onWindow(window.copy(minimized = !window.minimized)) }, Ink) }
-            if (windows.isEmpty()) { TaskbarIcon("files", {}, Ink); TaskbarIcon("browser", {}, Ink) }
+            TaskbarIcon("search", onStart, Ink)
+            listOf("files", "browser", "settings").forEach { icon ->
+                val running = windows.firstOrNull { it.icon == icon }
+                TaskbarIcon(icon, { if (running == null) onPinned(icon) else onWindow(running.copy(minimized = !running.minimized)) }, Ink, running != null)
+            }
+            windows.filter { it.icon !in setOf("files", "browser", "settings") }.take(5).forEach { window ->
+                TaskbarIcon(window.icon, { onWindow(window.copy(minimized = !window.minimized)) }, Ink, true)
+            }
         }
         Row(
             Modifier.align(Alignment.CenterEnd).padding(end = 10.dp).clip(MaterialTheme.shapes.small).clickable(onClick = onQuickSettings).padding(horizontal = 8.dp, vertical = 5.dp),
@@ -229,15 +322,73 @@ private fun WindowsTaskbar(
     }
 }
 
-@Composable private fun TaskbarIcon(label: String, onClick: () -> Unit, color: Color) {
-    IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) { ShellIcon(label, Modifier.size(36.dp), color) }
+@Composable private fun TaskbarIcon(label: String, onClick: () -> Unit, color: Color, active: Boolean = false) {
+    Box(contentAlignment = Alignment.BottomCenter) {
+        IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) { ShellIcon(label, Modifier.size(36.dp), color) }
+        if (active) Box(Modifier.padding(bottom = 2.dp).width(16.dp).height(3.dp).clip(MaterialTheme.shapes.small).background(WinBlue))
+    }
+}
+
+@Composable
+private fun DesktopContextMenu(
+    request: DesktopMenuRequest,
+    onDismiss: () -> Unit,
+    onIconSize: (Int) -> Unit,
+    onSort: (Int) -> Unit,
+    onRefresh: () -> Unit,
+    onNewFolder: () -> Unit,
+    onNewText: () -> Unit,
+    onWallpaper: () -> Unit,
+    onSettings: () -> Unit,
+    onProperties: () -> Unit,
+) {
+    Popup(
+        offset = IntOffset(request.x, request.y),
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true),
+    ) {
+        Card(
+            Modifier.width(238.dp).shadow(22.dp, MaterialTheme.shapes.large),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .97f)),
+            shape = MaterialTheme.shapes.large,
+        ) {
+            Column(Modifier.padding(vertical = 7.dp)) {
+                ContextMenuHeading("View")
+                ContextMenuItem("Small icons") { onIconSize(0); onDismiss() }
+                ContextMenuItem("Medium icons") { onIconSize(1); onDismiss() }
+                ContextMenuItem("Large icons") { onIconSize(2); onDismiss() }
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                ContextMenuHeading("Sort by")
+                ContextMenuItem("Name") { onSort(0); onDismiss() }
+                ContextMenuItem("Type") { onSort(1); onDismiss() }
+                ContextMenuItem("Date created") { onSort(2); onDismiss() }
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                ContextMenuItem("Refresh", onRefresh)
+                ContextMenuItem("New folder", onNewFolder)
+                ContextMenuItem("New text document", onNewText)
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                ContextMenuItem("Change wallpaper", onWallpaper)
+                ContextMenuItem("Display settings", onSettings)
+                ContextMenuItem("Personalize", onSettings)
+                ContextMenuItem("Properties", onProperties)
+            }
+        }
+    }
+}
+
+@Composable private fun ContextMenuHeading(label: String) {
+    Text(label, Modifier.padding(horizontal = 14.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
+}
+
+@Composable private fun ContextMenuItem(label: String, onClick: () -> Unit) {
+    Text(label, Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 7.dp), color = Ink, style = MaterialTheme.typography.bodyMedium)
 }
 
 @Composable
 internal fun ShellIcon(key: String, modifier: Modifier = Modifier, fallbackColor: Color = Ink) {
     val resource = when (key) {
         "files" -> R.drawable.desktop_files
-        "browser" -> R.drawable.desktop_browser
+        "browser" -> R.drawable.desktop_browser_modern
         "notes" -> R.drawable.desktop_notes
         "phone" -> R.drawable.desktop_phone
         "image" -> R.drawable.explorer_picture

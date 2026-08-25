@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.zIndex
 import java.util.UUID
 import kotlin.math.roundToInt
@@ -41,28 +42,41 @@ fun WindowManager(
     onUpdate: (WindowState) -> Unit,
     onClose: (WindowState) -> Unit,
 ) {
+    BoxWithConstraints(Modifier.fillMaxSize().padding(bottom = 56.dp)) {
+    val density = LocalDensity.current
+    val areaWidthPx = with(density) { maxWidth.toPx() }
+    val areaHeightPx = with(density) { maxHeight.toPx() }
     windows.filterNot { it.minimized }.sortedBy { it.zIndex }.forEach { window ->
         var dragX by remember(window.id, window.maximized) { mutableFloatStateOf(window.offsetX) }
         var dragY by remember(window.id, window.maximized) { mutableFloatStateOf(window.offsetY) }
+        var frameWidth by remember(window.id, window.width) { mutableFloatStateOf(window.width) }
+        var frameHeight by remember(window.id, window.height) { mutableFloatStateOf(window.height) }
         val frameModifier = if (window.maximized) {
-            Modifier.fillMaxSize().padding(bottom = 56.dp)
+            Modifier.fillMaxSize()
         } else {
             Modifier.offset { IntOffset(dragX.roundToInt(), dragY.roundToInt()) }
-                .size(window.width.dp, window.height.dp)
+                .size(frameWidth.dp, frameHeight.dp)
         }
 
-        Column(
-            modifier = frameModifier.zIndex(window.zIndex.toFloat())
+        Box(modifier = frameModifier.zIndex(window.zIndex.toFloat())
                 .shadow(24.dp, MaterialTheme.shapes.large)
                 .clip(MaterialTheme.shapes.large).background(MaterialTheme.colorScheme.surface)
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.large),
-        ) {
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.large)) {
+        Column(Modifier.fillMaxSize()) {
             Row(
                 modifier = Modifier.fillMaxWidth().height(46.dp).background(MaterialTheme.colorScheme.surfaceVariant)
                     .pointerInput(window.id, window.maximized) {
                         if (!window.maximized) detectDragGestures(
                             onDragStart = { onUpdate(window) },
-                            onDragEnd = { onUpdate(window.copy(offsetX = dragX, offsetY = dragY)) },
+                            onDragEnd = {
+                                val snap = when {
+                                    dragY <= 12f -> window.copy(offsetX = 0f, offsetY = 0f, maximized = true)
+                                    dragX <= 12f -> window.copy(offsetX = 0f, offsetY = 0f, width = with(density) { (areaWidthPx / 2).toDp().value }, height = with(density) { areaHeightPx.toDp().value })
+                                    dragX + with(density) { frameWidth.dp.toPx() } >= areaWidthPx - 12f -> window.copy(offsetX = areaWidthPx / 2, offsetY = 0f, width = with(density) { (areaWidthPx / 2).toDp().value }, height = with(density) { areaHeightPx.toDp().value })
+                                    else -> window.copy(offsetX = dragX, offsetY = dragY, width = frameWidth, height = frameHeight)
+                                }
+                                onUpdate(snap)
+                            },
                         ) { change, amount ->
                             change.consume()
                             dragX = (dragX + amount.x).coerceAtLeast(0f)
@@ -80,6 +94,18 @@ fun WindowManager(
             }
             Box(Modifier.fillMaxSize().clipToBounds().background(MaterialTheme.colorScheme.background)) { window.content() }
         }
+        if (!window.maximized) Box(
+            Modifier.align(Alignment.BottomEnd).size(20.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = .18f))
+                .pointerInput(window.id) {
+                    detectDragGestures(onDragEnd = { onUpdate(window.copy(width = frameWidth, height = frameHeight)) }) { change, amount ->
+                        change.consume()
+                        frameWidth = (frameWidth + amount.x / density.density).coerceAtLeast(320f)
+                        frameHeight = (frameHeight + amount.y / density.density).coerceAtLeast(220f)
+                    }
+                }
+        )
+        }
+    }
     }
 }
 

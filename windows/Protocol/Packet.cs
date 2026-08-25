@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.IO;
 
 namespace UniversalMobileDesktop.Protocol
@@ -30,8 +31,10 @@ namespace UniversalMobileDesktop.Protocol
         {
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
-            
-            writer.Write(Length);
+
+            Span<byte> lengthBytes = stackalloc byte[sizeof(int)];
+            BinaryPrimitives.WriteInt32BigEndian(lengthBytes, Length);
+            writer.Write(lengthBytes);
             writer.Write((byte)Type);
             writer.Write(Payload);
             
@@ -42,9 +45,14 @@ namespace UniversalMobileDesktop.Protocol
         {
             try
             {
-                int length = reader.ReadInt32();
+                var lengthBytes = reader.ReadBytes(sizeof(int));
+                if (lengthBytes.Length != sizeof(int)) return null;
+                int length = BinaryPrimitives.ReadInt32BigEndian(lengthBytes);
+                if (length < 0 || length > 16 * 1024 * 1024)
+                    throw new InvalidDataException($"Invalid packet length: {length}");
                 byte typeByte = reader.ReadByte();
                 byte[] payload = reader.ReadBytes(length);
+                if (payload.Length != length) return null;
                 
                 return new Packet((PacketType)typeByte, payload);
             }

@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Diagnostics;
+using System.Buffers.Binary;
 using System.Net.Sockets;
 using UniversalMobileDesktop.Protocol;
 
@@ -10,7 +11,12 @@ public sealed class ReceiverForm : Form
     private readonly Label state = new();
     private readonly Label telemetry = new();
     private readonly Button connect = new();
+    private readonly Button fullscreen = new();
     private readonly PictureBox viewport = new();
+    private readonly Panel header = new();
+    private readonly Panel footer = new();
+    private readonly Label fullscreenHint = new();
+    private readonly System.Windows.Forms.Timer hintTimer = new() { Interval = 3500 };
     private readonly System.Windows.Forms.Timer sessionTimer = new() { Interval = 1000 };
     private int seconds;
     private bool isConnected;
@@ -18,6 +24,12 @@ public sealed class ReceiverForm : Form
     private TcpClient? tcpClient;
     private Thread? receiveThread;
     private int frameCount;
+    private readonly object sendLock = new();
+    private const int DesktopWidth = 1920;
+    private const int DesktopHeight = 1080;
+    private bool isFullscreen;
+    private FormWindowState previousWindowState;
+    private FormBorderStyle previousBorderStyle;
 
     public ReceiverForm()
     {
@@ -27,9 +39,14 @@ public sealed class ReceiverForm : Form
         BackColor = Color.FromArgb(15, 23, 42);
         ForeColor = Color.White;
         StartPosition = FormStartPosition.CenterScreen;
+        WindowState = FormWindowState.Maximized;
+        KeyPreview = true;
 
         // Header
-        var header = new Panel { Dock = DockStyle.Top, Height = 72, BackColor = Color.FromArgb(17, 24, 39), Padding = new Padding(20, 12, 20, 12) };
+        header.Dock = DockStyle.Top;
+        header.Height = 72;
+        header.BackColor = Color.FromArgb(17, 24, 39);
+        header.Padding = new Padding(20, 12, 20, 12);
         var title = new Label { Text = "◆  Desktop Mod", AutoSize = true, Font = new Font("Segoe UI", 17, FontStyle.Bold), Location = new Point(20, 18) };
         state.Text = "● Waiting for phone";
         state.AutoSize = true;
@@ -45,16 +62,35 @@ public sealed class ReceiverForm : Form
         connect.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         connect.Location = new Point(Width - 190, 18);
         connect.Click += (_, _) => ToggleSession();
-        header.Resize += (_, _) => connect.Left = header.ClientSize.Width - connect.Width - 20;
-        header.Controls.AddRange([title, state, connect]);
+        fullscreen.Text = "Full screen";
+        fullscreen.AutoSize = true;
+        fullscreen.FlatStyle = FlatStyle.Flat;
+        fullscreen.BackColor = Color.FromArgb(51, 65, 85);
+        fullscreen.ForeColor = Color.White;
+        fullscreen.FlatAppearance.BorderSize = 0;
+        fullscreen.Padding = new Padding(12, 4, 12, 4);
+        fullscreen.Click += (_, _) => EnterFullscreen();
+        header.Resize += (_, _) => PositionHeaderButtons();
+        header.Controls.AddRange([title, state, fullscreen, connect]);
 
         // Viewport (PictureBox for rendering decoded frames)
         viewport.Dock = DockStyle.Fill;
         viewport.BackColor = Color.Black;
         viewport.SizeMode = PictureBoxSizeMode.Zoom;
+        viewport.TabStop = true;
+        viewport.MouseDown += (_, eventArgs) => SendPointer(eventArgs.Location, eventArgs.Button == MouseButtons.Right ? 5 : 1);
+        viewport.MouseUp += (_, eventArgs) => SendPointer(eventArgs.Location, eventArgs.Button == MouseButtons.Right ? 6 : 2);
+        viewport.MouseMove += (_, eventArgs) => SendPointer(eventArgs.Location, 0);
+        viewport.MouseWheel += (_, eventArgs) => SendPointer(eventArgs.Location, eventArgs.Delta > 0 ? 3 : 4);
+        viewport.MouseEnter += (_, _) => viewport.Focus();
+        viewport.KeyDown += (_, eventArgs) => SendKey(eventArgs.KeyCode, true);
+        viewport.KeyUp += (_, eventArgs) => SendKey(eventArgs.KeyCode, false);
 
         // Footer
-        var footer = new Panel { Dock = DockStyle.Bottom, Height = 48, BackColor = Color.FromArgb(17, 24, 39), Padding = new Padding(18, 14, 18, 8) };
+        footer.Dock = DockStyle.Bottom;
+        footer.Height = 48;
+        footer.BackColor = Color.FromArgb(17, 24, 39);
+        footer.Padding = new Padding(18, 14, 18, 8);
         telemetry.Text = "No active session • Run: adb forward tcp:5000 tcp:5000";
         telemetry.AutoSize = true;
         telemetry.ForeColor = Color.FromArgb(148, 163, 184);
@@ -63,6 +99,26 @@ public sealed class ReceiverForm : Form
         Controls.Add(viewport);
         Controls.Add(footer);
         Controls.Add(header);
+
+        fullscreenHint.Text = "Full screen  •  Press Esc to exit";
+        fullscreenHint.AutoSize = true;
+        fullscreenHint.Font = new Font("Segoe UI", 11, FontStyle.Bold);
+        fullscreenHint.BackColor = Color.FromArgb(220, 15, 23, 42);
+        fullscreenHint.ForeColor = Color.White;
+        fullscreenHint.Padding = new Padding(18, 10, 18, 10);
+        fullscreenHint.Visible = false;
+        Controls.Add(fullscreenHint);
+        Resize += (_, _) => PositionFullscreenHint();
+        hintTimer.Tick += (_, _) => { hintTimer.Stop(); fullscreenHint.Visible = false; };
+        KeyDown += (_, eventArgs) =>
+        {
+            if (eventArgs.KeyCode == Keys.Escape && isFullscreen)
+            {
+                ExitFullscreen();
+                eventArgs.Handled = true;
+                eventArgs.SuppressKeyPress = true;
+            }
+        };
 
         sessionTimer.Tick += (_, _) =>
         {
@@ -73,6 +129,54 @@ public sealed class ReceiverForm : Form
         // Draw initial placeholder text
         viewport.Paint += PaintPlaceholder;
         Shown += (_, _) => ConnectToDevice();
+    }
+
+    private void PositionHeaderButtons()
+    {
+        connect.Left = header.ClientSize.Width - connect.Width - 20;
+        connect.Top = 18;
+        fullscreen.Left = connect.Left - fullscreen.Width - 10;
+        fullscreen.Top = 18;
+    }
+
+    private void EnterFullscreen()
+    {
+        if (isFullscreen) return;
+        isFullscreen = true;
+        previousWindowState = WindowState;
+        previousBorderStyle = FormBorderStyle;
+        header.Visible = false;
+        footer.Visible = false;
+        FormBorderStyle = FormBorderStyle.None;
+        WindowState = FormWindowState.Normal;
+        Bounds = Screen.FromControl(this).Bounds;
+        TopMost = true;
+        fullscreenHint.Visible = true;
+        fullscreenHint.BringToFront();
+        PositionFullscreenHint();
+        hintTimer.Stop();
+        hintTimer.Start();
+        viewport.Focus();
+    }
+
+    private void ExitFullscreen()
+    {
+        if (!isFullscreen) return;
+        isFullscreen = false;
+        hintTimer.Stop();
+        fullscreenHint.Visible = false;
+        TopMost = false;
+        FormBorderStyle = previousBorderStyle;
+        header.Visible = true;
+        footer.Visible = true;
+        WindowState = previousWindowState;
+        PositionHeaderButtons();
+    }
+
+    private void PositionFullscreenHint()
+    {
+        fullscreenHint.Left = Math.Max(0, (ClientSize.Width - fullscreenHint.Width) / 2);
+        fullscreenHint.Top = 22;
     }
 
     private void PaintPlaceholder(object? sender, PaintEventArgs e)
@@ -202,6 +306,63 @@ public sealed class ReceiverForm : Form
             BeginInvoke(() => telemetry.Text = $"Frame decode failed: {error.Message}");
         }
     }
+
+    private void SendPointer(Point clientPoint, int action)
+    {
+        if (!isConnected || viewport.ClientSize.Width <= 0 || viewport.ClientSize.Height <= 0) return;
+
+        var scale = Math.Min(
+            viewport.ClientSize.Width / (double)DesktopWidth,
+            viewport.ClientSize.Height / (double)DesktopHeight);
+        var renderedWidth = DesktopWidth * scale;
+        var renderedHeight = DesktopHeight * scale;
+        var left = (viewport.ClientSize.Width - renderedWidth) / 2.0;
+        var top = (viewport.ClientSize.Height - renderedHeight) / 2.0;
+        if (clientPoint.X < left || clientPoint.X >= left + renderedWidth ||
+            clientPoint.Y < top || clientPoint.Y >= top + renderedHeight) return;
+
+        var x = Math.Clamp((int)((clientPoint.X - left) / scale), 0, DesktopWidth - 1);
+        var y = Math.Clamp((int)((clientPoint.Y - top) / scale), 0, DesktopHeight - 1);
+        Span<byte> payload = stackalloc byte[12];
+        BinaryPrimitives.WriteInt32BigEndian(payload[0..4], x);
+        BinaryPrimitives.WriteInt32BigEndian(payload[4..8], y);
+        BinaryPrimitives.WriteInt32BigEndian(payload[8..12], action);
+        SendPacket(new Packet(PacketType.MouseEvent, payload.ToArray()));
+    }
+
+    private void SendKey(Keys key, bool isDown)
+    {
+        if (!isConnected) return;
+        var androidKeyCode = ToAndroidKeyCode(key);
+        if (androidKeyCode < 0) return;
+        Span<byte> payload = stackalloc byte[5];
+        BinaryPrimitives.WriteInt32BigEndian(payload[0..4], androidKeyCode);
+        payload[4] = isDown ? (byte)1 : (byte)0;
+        SendPacket(new Packet(PacketType.KeyEvent, payload.ToArray()));
+    }
+
+    private void SendPacket(Packet packet)
+    {
+        try
+        {
+            var bytes = packet.Serialize();
+            lock (sendLock) tcpClient?.GetStream().Write(bytes, 0, bytes.Length);
+        }
+        catch (Exception error)
+        {
+            BeginInvoke(() => telemetry.Text = $"Input send failed: {error.Message}");
+        }
+    }
+
+    private static int ToAndroidKeyCode(Keys key) => key switch
+    {
+        Keys.Back => 67, Keys.Tab => 61, Keys.Enter => 66, Keys.Escape => 111,
+        Keys.Space => 62, Keys.Left => 21, Keys.Up => 19, Keys.Right => 22, Keys.Down => 20,
+        Keys.Delete => 112, Keys.Home => 3, Keys.End => 123, Keys.PageUp => 92, Keys.PageDown => 93,
+        >= Keys.A and <= Keys.Z => 29 + (key - Keys.A),
+        >= Keys.D0 and <= Keys.D9 => 7 + (key - Keys.D0),
+        _ => -1
+    };
 
     private static void EnsureAdbForwarding()
     {

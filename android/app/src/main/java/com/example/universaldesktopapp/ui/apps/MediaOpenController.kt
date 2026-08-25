@@ -4,7 +4,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 
-enum class MediaKind { IMAGE, VIDEO }
+enum class MediaKind { IMAGE, VIDEO, AUDIO }
 data class MediaOpenRequest(val id: Long = System.nanoTime(), val file: File, val kind: MediaKind)
 
 object MediaOpenController {

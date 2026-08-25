@@ -50,7 +50,7 @@ class DesktopPresentation(outerContext: Context, display: Display) :
             setContent {
                 UniversalDesktopAppTheme {
                     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                        DesktopHome()
+                        DesktopHome(isPcMode = true)
                     }
                 }
             }
