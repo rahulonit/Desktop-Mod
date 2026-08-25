@@ -1,5 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.UniversalDesktopApp" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.UniversalDesktopApp" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">@drawable/splash_background</item>
+        <item name="android:statusBarColor">@color/splash_navy</item>
+        <item name="android:navigationBarColor">@color/splash_navy</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+    <style name="Theme.UniversalDesktopApp.Splash" parent="Theme.UniversalDesktopApp">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
 </resources>

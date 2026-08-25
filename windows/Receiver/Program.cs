@@ -10,7 +10,7 @@ internal static class Program
         {
             File.WriteAllText(@"c:\Github\Desktop-Mod\windows\crash.log",
                 $"[ThreadException] {DateTime.Now}\n{e.Exception}\n");
-            MessageBox.Show(e.Exception.ToString(), "Universal Mobile Desktop - Error",
+            MessageBox.Show(e.Exception.ToString(), "Desktop Mod - Error",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         };
 
@@ -29,7 +29,7 @@ internal static class Program
         {
             File.WriteAllText(@"c:\Github\Desktop-Mod\windows\crash.log",
                 $"[Main] {DateTime.Now}\n{ex}\n");
-            MessageBox.Show(ex.ToString(), "Universal Mobile Desktop - Startup Error",
+            MessageBox.Show(ex.ToString(), "Desktop Mod - Startup Error",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }

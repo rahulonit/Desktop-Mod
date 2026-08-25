@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Diagnostics;
 using System.Net.Sockets;
 using UniversalMobileDesktop.Protocol;
 
@@ -20,7 +21,7 @@ public sealed class ReceiverForm : Form
 
     public ReceiverForm()
     {
-        Text = "Universal Mobile Desktop Receiver";
+        Text = "Desktop Mod";
         MinimumSize = new Size(1024, 720);
         Size = new Size(1280, 800);
         BackColor = Color.FromArgb(15, 23, 42);
@@ -29,7 +30,7 @@ public sealed class ReceiverForm : Form
 
         // Header
         var header = new Panel { Dock = DockStyle.Top, Height = 72, BackColor = Color.FromArgb(17, 24, 39), Padding = new Padding(20, 12, 20, 12) };
-        var title = new Label { Text = "◆  Universal Mobile Desktop", AutoSize = true, Font = new Font("Segoe UI", 17, FontStyle.Bold), Location = new Point(20, 18) };
+        var title = new Label { Text = "◆  Desktop Mod", AutoSize = true, Font = new Font("Segoe UI", 17, FontStyle.Bold), Location = new Point(20, 18) };
         state.Text = "● Waiting for phone";
         state.AutoSize = true;
         state.ForeColor = Color.FromArgb(148, 163, 184);
@@ -71,6 +72,7 @@ public sealed class ReceiverForm : Form
 
         // Draw initial placeholder text
         viewport.Paint += PaintPlaceholder;
+        Shown += (_, _) => ConnectToDevice();
     }
 
     private void PaintPlaceholder(object? sender, PaintEventArgs e)
@@ -86,7 +88,7 @@ public sealed class ReceiverForm : Form
             e.Graphics.DrawString(
                 "Step 1: Connect phone via USB and enable USB debugging\n" +
                 "Step 2: Run in terminal: adb forward tcp:5000 tcp:5000\n" +
-                "Step 3: Launch the Universal Mobile Desktop app on your phone\n" +
+                "Step 3: Launch the Desktop Mod app on your phone\n" +
                 "Step 4: Click \"Connect\" above",
                 bodyFont, Brushes.LightSlateGray, new RectangleF(60, bounds.Height / 2f - 10, bounds.Width - 120, 120), center);
         }
@@ -112,9 +114,14 @@ public sealed class ReceiverForm : Form
         {
             try
             {
+                EnsureAdbForwarding();
+
                 // Establish the phone session before loading the comparatively heavy decoder runtime.
                 tcpClient = new TcpClient();
-                tcpClient.Connect("127.0.0.1", 5000);
+                tcpClient.ConnectAsync("127.0.0.1", 5000).Wait(TimeSpan.FromSeconds(5));
+                if (!tcpClient.Connected)
+                    throw new IOException("The phone did not accept the desktop connection within 5 seconds.");
+                isConnected = true;
                 BeginInvoke(() =>
                 {
                     state.Text = "● Phone connected • transport mode";
@@ -148,6 +155,7 @@ public sealed class ReceiverForm : Form
                     if (packet.Type == PacketType.VideoFrame)
                     {
                         frameCount++;
+                        RenderFrame(packet.Payload);
                     }
                 }
             }
@@ -173,6 +181,102 @@ public sealed class ReceiverForm : Form
         });
         receiveThread.IsBackground = true;
         receiveThread.Start();
+    }
+
+    private void RenderFrame(byte[] jpegData)
+    {
+        try
+        {
+            using var stream = new MemoryStream(jpegData, writable: false);
+            using var decoded = Image.FromStream(stream);
+            var frame = new Bitmap(decoded);
+            BeginInvoke(() =>
+            {
+                var previous = viewport.Image;
+                viewport.Image = frame;
+                previous?.Dispose();
+            });
+        }
+        catch (Exception error)
+        {
+            BeginInvoke(() => telemetry.Text = $"Frame decode failed: {error.Message}");
+        }
+    }
+
+    private static void EnsureAdbForwarding()
+    {
+        var adb = FindAdb();
+        if (adb is null)
+            throw new IOException("ADB was not found. Install Android Platform Tools or add adb.exe to PATH.");
+
+        RunAdb(adb, "start-server");
+        var devices = RunAdb(adb, "devices");
+        var connectedDevices = devices.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Where(line => line.EndsWith("\tdevice", StringComparison.Ordinal))
+            .ToArray();
+
+        if (connectedDevices.Length == 0)
+            throw new IOException("No authorized Android phone was found. Connect USB, enable USB debugging, and accept the phone's authorization prompt.");
+        if (connectedDevices.Length > 1)
+            throw new IOException("More than one Android device is connected. Disconnect the extra device and try again.");
+
+        RunAdb(adb, "forward tcp:5000 tcp:5000");
+    }
+
+    private static string? FindAdb()
+    {
+        var candidates = new List<string>();
+        var sdkRoot = Environment.GetEnvironmentVariable("ANDROID_SDK_ROOT");
+        var androidHome = Environment.GetEnvironmentVariable("ANDROID_HOME");
+        if (!string.IsNullOrWhiteSpace(sdkRoot))
+            candidates.Add(Path.Combine(sdkRoot, "platform-tools", "adb.exe"));
+        if (!string.IsNullOrWhiteSpace(androidHome))
+            candidates.Add(Path.Combine(androidHome, "platform-tools", "adb.exe"));
+        candidates.Add(Path.Combine(AppContext.BaseDirectory, "platform-tools", "adb.exe"));
+        candidates.Add(@"C:\GitLab\AndroidSdk\platform-tools\adb.exe");
+
+        var localAdb = candidates.FirstOrDefault(File.Exists);
+        if (localAdb is not null) return localAdb;
+
+        try
+        {
+            var probe = new ProcessStartInfo("where.exe", "adb.exe")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true
+            };
+            using var process = Process.Start(probe);
+            var path = process?.StandardOutput.ReadLine();
+            process?.WaitForExit(3000);
+            return !string.IsNullOrWhiteSpace(path) && File.Exists(path) ? path : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string RunAdb(string adb, string arguments)
+    {
+        var startInfo = new ProcessStartInfo(adb, arguments)
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        using var process = Process.Start(startInfo) ?? throw new IOException("ADB could not be started.");
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        if (!process.WaitForExit(10000))
+        {
+            process.Kill(true);
+            throw new IOException("ADB did not respond within 10 seconds.");
+        }
+        if (process.ExitCode != 0)
+            throw new IOException(string.IsNullOrWhiteSpace(error) ? "ADB command failed." : error.Trim());
+        return output;
     }
 
     private void Disconnect()

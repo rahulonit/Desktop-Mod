@@ -1,179 +1,362 @@
 package com.example.universaldesktopapp.ui.desktop
 
+import android.app.NotificationManager
+import android.content.Intent
+import android.media.AudioManager
 import android.os.BatteryManager
+import android.os.Build
+import android.provider.Settings
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.universaldesktopapp.ui.apps.BrowserApp
 import com.example.universaldesktopapp.ui.apps.FileManagerApp
 import com.example.universaldesktopapp.ui.apps.NotesApp
+import com.example.universaldesktopapp.ui.apps.ImagePreviewApp
+import com.example.universaldesktopapp.ui.apps.VideoPlayerApp
+import com.example.universaldesktopapp.ui.apps.MediaKind
+import com.example.universaldesktopapp.ui.apps.MediaOpenController
+import com.example.universaldesktopapp.ui.apps.CalculatorApp
+import com.example.universaldesktopapp.ui.apps.ClockApp
+import com.example.universaldesktopapp.ui.apps.AudioPlayerApp
+import com.example.universaldesktopapp.ui.apps.DesktopSettingsApp
 import com.example.universaldesktopapp.usb.UsbService
+import com.example.universaldesktopapp.R
+import com.example.universaldesktopapp.theme.ThemeController
+import com.example.universaldesktopapp.theme.ThemeMode
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 private data class DesktopApp(val title: String, val icon: String, val content: @Composable () -> Unit)
 
+private val WinBlue = Color(0xFF0067C0)
+private val Glass: Color @Composable get() = MaterialTheme.colorScheme.surface.copy(alpha = .94f)
+private val Ink: Color @Composable get() = MaterialTheme.colorScheme.onSurface
+
 @Composable
 fun DesktopHome() {
+    val context = LocalContext.current
     val usbConnected by UsbService.isReceiverConnected.collectAsState()
     val windows = remember { mutableStateListOf<WindowState>() }
     var startOpen by remember { mutableStateOf(false) }
+    var quickSettingsOpen by remember { mutableStateOf(false) }
     var controllerOpen by remember { mutableStateOf(false) }
     var nextZ by remember { mutableIntStateOf(1) }
+    val mediaRequest by MediaOpenController.request.collectAsState()
     val apps = remember {
         listOf(
-            DesktopApp("Files", "📁") { FileManagerApp() },
-            DesktopApp("Browser", "🌐") { BrowserApp() },
-            DesktopApp("Notes", "📝") { NotesApp() },
-            DesktopApp("Device", "📱") { DeviceApp() },
+            DesktopApp("File Explorer", "files") { FileManagerApp() },
+            DesktopApp("Browser", "browser") { BrowserApp() },
+            DesktopApp("Notepad", "notes") { NotesApp() },
+            DesktopApp("This Phone", "phone") { DeviceApp() },
+            DesktopApp("Image Preview", "image") { ImagePreviewApp() },
+            DesktopApp("Video Player", "video") { VideoPlayerApp() },
+            DesktopApp("Audio Player", "audio") { AudioPlayerApp() },
+            DesktopApp("Calculator", "calculator") { CalculatorApp() },
+            DesktopApp("Clock", "clock") { ClockApp() },
+            DesktopApp("Settings", "settings") { DesktopSettingsApp() },
         )
     }
 
     fun openApp(app: DesktopApp) {
+        nextZ++
         val existing = windows.indexOfFirst { it.title == app.title }
-        nextZ += 1
         if (existing >= 0) windows[existing] = windows[existing].copy(minimized = false, zIndex = nextZ)
         else windows += WindowState(title = app.title, icon = app.icon, zIndex = nextZ, content = app.content)
         startOpen = false
     }
     fun updateWindow(updated: WindowState) {
         val index = windows.indexOfFirst { it.id == updated.id }
-        if (index >= 0) {
-            nextZ += 1
-            windows[index] = updated.copy(zIndex = nextZ)
+        if (index >= 0) { nextZ++; windows[index] = updated.copy(zIndex = nextZ) }
+    }
+    fun openInstalledApp(app: LaunchableApp) {
+        launchInstalledApp(context, app.packageName)
+        startOpen = false
+    }
+    LaunchedEffect(mediaRequest?.id) {
+        mediaRequest?.let { request ->
+            nextZ++
+            windows += WindowState(
+                title = request.file.name,
+                icon = if (request.kind == MediaKind.IMAGE) "image" else "video",
+                zIndex = nextZ,
+                width = 720f,
+                height = 480f,
+                content = {
+                    if (request.kind == MediaKind.IMAGE) ImagePreviewApp(request.file) else VideoPlayerApp(request.file)
+                },
+            )
+            MediaOpenController.consumed(request)
         }
     }
 
     Box(
         Modifier.fillMaxSize().background(
-            Brush.linearGradient(listOf(Color(0xFF0F172A), Color(0xFF164E63), Color(0xFF0E7490)))
+            Brush.linearGradient(
+                listOf(Color(0xFFB9E5FF), Color(0xFF5AA8F5), Color(0xFF2859B8), Color(0xFF091B4D)),
+            ),
         ),
     ) {
-        Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            apps.forEach { app -> DesktopIcon(app) { openApp(app) } }
+        Image(
+            painter = painterResource(R.drawable.desktop_wallpaper),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .12f)))
+        Box(Modifier.fillMaxSize().clickable {
+            startOpen = false
+            quickSettingsOpen = false
+        })
+        Column(Modifier.padding(start = 24.dp, top = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            apps.forEach { app -> DesktopShortcut(app, { openApp(app) }) }
         }
 
         WindowManager(windows, ::updateWindow) { closing -> windows.removeAll { it.id == closing.id } }
 
-        if (startOpen) StartMenu(apps, ::openApp, Modifier.align(Alignment.BottomStart).padding(bottom = 58.dp, start = 8.dp))
+        if (startOpen) {
+            StartMenu(
+                onInstalledApp = ::openInstalledApp,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 68.dp),
+            )
+        }
+        if (quickSettingsOpen) {
+            QuickSettings(
+                usbConnected,
+                Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 68.dp),
+            )
+        }
 
-        Taskbar(
+        WindowsTaskbar(
             windows = windows,
-            onStart = { startOpen = !startOpen },
+            onStart = { startOpen = !startOpen; quickSettingsOpen = false },
             onWindow = ::updateWindow,
+            onQuickSettings = { quickSettingsOpen = !quickSettingsOpen; startOpen = false },
             onController = { controllerOpen = true },
-            usbConnected = usbConnected,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
-
-        if (controllerOpen) ControllerSheet { controllerOpen = false }
+        if (controllerOpen) ControllerSheet(usbConnected) { controllerOpen = false }
     }
 }
 
 @Composable
-private fun DesktopIcon(app: DesktopApp, onClick: () -> Unit) {
+private fun DesktopShortcut(app: DesktopApp, onClick: () -> Unit) {
     Column(
-        Modifier.width(76.dp).clickable(onClick = onClick).padding(4.dp),
+        Modifier.width(86.dp).clip(MaterialTheme.shapes.small).clickable(onClick = onClick).padding(6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(app.icon, style = MaterialTheme.typography.headlineLarge)
-        Text(app.title, color = Color.White, style = MaterialTheme.typography.labelLarge)
+        ShellIcon(app.icon, Modifier.size(42.dp))
+        Text(app.title, color = Color.White, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable
-private fun StartMenu(apps: List<DesktopApp>, onOpen: (DesktopApp) -> Unit, modifier: Modifier) {
-    Card(modifier.width(300.dp).height(390.dp), colors = CardDefaults.cardColors(containerColor = Color(0xF21E293B))) {
-        Column(Modifier.padding(18.dp)) {
-            Text("Universal Mobile Desktop", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("Connect your phone. Get a desktop.", color = Color(0xFF94A3B8))
-            HorizontalDivider(Modifier.padding(vertical = 14.dp), color = Color(0xFF475569))
-            LazyColumn { items(apps) { app ->
-                Row(
-                    Modifier.fillMaxWidth().clickable { onOpen(app) }.padding(vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                ) { Text(app.icon); Text(app.title, color = Color.White) }
-            } }
-        }
-    }
-}
-
-@Composable
-private fun Taskbar(
-    windows: List<WindowState>, onStart: () -> Unit, onWindow: (WindowState) -> Unit,
-    onController: () -> Unit, usbConnected: Boolean, modifier: Modifier,
-) {
-    val clock = remember { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()) }
-    Row(
-        modifier.fillMaxWidth().height(54.dp).background(Color(0xF2111827)).padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+private fun StartMenu(onInstalledApp: (LaunchableApp) -> Unit, modifier: Modifier) {
+    var query by remember { mutableStateOf("") }
+    Card(
+        modifier.width(520.dp).height(570.dp).shadow(28.dp, MaterialTheme.shapes.extraLarge),
+        colors = CardDefaults.cardColors(containerColor = Glass),
+        shape = MaterialTheme.shapes.extraLarge,
     ) {
-        Button(onClick = onStart, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("◆  Start") }
-        windows.forEach { window ->
-            TextButton(onClick = { onWindow(window.copy(minimized = !window.minimized)) }) {
-                Text("${window.icon} ${window.title}", color = if (window.minimized) Color.Gray else Color.White)
+        Column(Modifier.fillMaxSize().padding(top = 28.dp)) {
+            OutlinedTextField(
+                value = query, onValueChange = { query = it },
+                placeholder = { Text("Search for apps, settings, and documents") },
+                leadingIcon = { Text("⌕", style = MaterialTheme.typography.titleLarge) },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 34.dp), singleLine = true,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp),
+            )
+            Text("All apps", Modifier.padding(start = 38.dp, top = 22.dp, bottom = 8.dp), color = Ink, fontWeight = FontWeight.SemiBold)
+            AllAppsGrid(query = query, onLaunch = onInstalledApp, modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 24.dp))
+            Row(
+                Modifier.fillMaxWidth().height(68.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .85f)).padding(horizontal = 36.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Surface(shape = androidx.compose.foundation.shape.CircleShape, color = WinBlue, modifier = Modifier.size(34.dp)) { Box(contentAlignment = Alignment.Center) { Text("U", color = Color.White) } }
+                Text("Universal Mobile", Modifier.padding(start = 12.dp).weight(1f), color = Ink)
+                IconButton(onClick = {}) { Text("⏻", color = Ink, style = MaterialTheme.typography.titleLarge) }
             }
         }
-        Spacer(Modifier.weight(1f))
-        TextButton(onClick = onController) { Text("⌁ Controller", color = Color.White) }
-        Text(
-            if (usbConnected) "● USB connected" else "● USB disconnected",
-            color = if (usbConnected) Color(0xFF4ADE80) else Color(0xFFF87171),
-        )
-        Text(clock, color = Color.White, modifier = Modifier.padding(horizontal = 10.dp))
+    }
+}
+
+@Composable
+private fun WindowsTaskbar(
+    windows: List<WindowState>, onStart: () -> Unit,
+    onWindow: (WindowState) -> Unit, onQuickSettings: () -> Unit, onController: () -> Unit,
+    modifier: Modifier,
+) {
+    val time = remember { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()) }
+    val date = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date()) }
+    Box(
+        modifier.fillMaxWidth().height(58.dp)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = .94f))
+            .clickable(onClick = {}),
+    ) {
+        Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            TaskbarIcon("start", onStart, WinBlue)
+            TaskbarIcon("search", {}, Ink)
+            windows.take(5).forEach { window -> TaskbarIcon(window.icon, { onWindow(window.copy(minimized = !window.minimized)) }, Ink) }
+            if (windows.isEmpty()) { TaskbarIcon("files", {}, Ink); TaskbarIcon("browser", {}, Ink) }
+        }
+        Row(
+            Modifier.align(Alignment.CenterEnd).padding(end = 10.dp).clip(MaterialTheme.shapes.small).clickable(onClick = onQuickSettings).padding(horizontal = 8.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("⌁", color = Ink, modifier = Modifier.clickable(onClick = onController))
+            Text("🔊", color = Ink)
+            Column(horizontalAlignment = Alignment.End) { Text(time, color = Ink, style = MaterialTheme.typography.labelMedium); Text(date, color = Ink, style = MaterialTheme.typography.labelSmall) }
+        }
+    }
+}
+
+@Composable private fun TaskbarIcon(label: String, onClick: () -> Unit, color: Color) {
+    IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) { ShellIcon(label, Modifier.size(36.dp), color) }
+}
+
+@Composable
+internal fun ShellIcon(key: String, modifier: Modifier = Modifier, fallbackColor: Color = Ink) {
+    val resource = when (key) {
+        "files" -> R.drawable.desktop_files
+        "browser" -> R.drawable.desktop_browser
+        "notes" -> R.drawable.desktop_notes
+        "phone" -> R.drawable.desktop_phone
+        "image" -> R.drawable.explorer_picture
+        "video" -> R.drawable.explorer_video
+        "audio" -> R.drawable.explorer_audio
+        "search" -> R.drawable.desktop_search
+        "start" -> R.drawable.desktop_start
+        else -> null
+    }
+    if (resource != null) {
+        Image(painterResource(resource), contentDescription = key, contentScale = ContentScale.Fit, modifier = modifier)
+    } else {
+        Box(modifier, contentAlignment = Alignment.Center) {
+            Text(key.take(1).uppercase(), color = fallbackColor, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun QuickSettings(usbConnected: Boolean, modifier: Modifier) {
+    val context = LocalContext.current
+    val themeMode by ThemeController.mode.collectAsState()
+    val audioManager = remember { context.getSystemService(AudioManager::class.java) }
+    val maximumVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
+    var volume by remember { mutableFloatStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maximumVolume) }
+    val notificationManager = remember { context.getSystemService(NotificationManager::class.java) }
+    val batteryLevel = remember { context.getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) }
+    val focusActive = notificationManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL
+    fun openSetting(intent: Intent) {
+        runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+    }
+    Card(modifier.width(330.dp).shadow(24.dp, MaterialTheme.shapes.extraLarge), colors = CardDefaults.cardColors(containerColor = Glass), shape = MaterialTheme.shapes.extraLarge) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("Quick settings", color = Ink, style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                QuickTile(R.drawable.ic_qs_wifi, "Wi-Fi", true) {
+                    openSetting(Intent(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Settings.Panel.ACTION_WIFI else Settings.ACTION_WIFI_SETTINGS))
+                }
+                QuickTile(R.drawable.ic_qs_bluetooth, "Bluetooth", true) { openSetting(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
+                QuickTile(R.drawable.ic_qs_focus, "Focus", focusActive) { openSetting(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)) }
+            }
+            HorizontalDivider()
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(painterResource(R.drawable.ic_qs_usb), null, tint = if (usbConnected) Color(0xFF16853D) else Color(0xFFC42B1C), modifier = Modifier.size(20.dp))
+                Text(if (usbConnected) "Phone receiver connected" else "Phone receiver disconnected", color = if (usbConnected) Color(0xFF16853D) else Color(0xFFC42B1C))
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(painterResource(R.drawable.ic_qs_battery), null, tint = Ink, modifier = Modifier.size(20.dp))
+                Text("Battery", Modifier.weight(1f), color = Ink)
+                Text("$batteryLevel%", color = Ink, fontWeight = FontWeight.SemiBold)
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Icon(painterResource(R.drawable.ic_qs_theme), null, tint = Ink, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Appearance", Modifier.weight(1f), color = Ink)
+                OutlinedButton(onClick = {
+                    val next = when (themeMode) {
+                        ThemeMode.SYSTEM -> ThemeMode.LIGHT
+                        ThemeMode.LIGHT -> ThemeMode.DARK
+                        ThemeMode.DARK -> ThemeMode.SYSTEM
+                    }
+                    ThemeController.set(context, next)
+                }) { Text(themeMode.name.lowercase().replaceFirstChar { it.uppercase() }) }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(painterResource(R.drawable.ic_qs_volume), null, tint = Ink, modifier = Modifier.size(20.dp))
+                Text("Volume", color = Ink)
+            }
+            Slider(
+                value = volume,
+                onValueChange = {
+                    volume = it
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (it * maximumVolume).toInt(), 0)
+                },
+            )
+        }
+    }
+}
+
+@Composable private fun RowScope.QuickTile(icon: Int, label: String, active: Boolean, onClick: () -> Unit) {
+    Surface(onClick = onClick, modifier = Modifier.weight(1f), color = if (active) WinBlue else MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.medium) {
+        Column(Modifier.padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(painterResource(icon), null, tint = if (active) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+            Text(label, color = if (active) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+        }
     }
 }
 
 @Composable
 private fun DeviceApp() {
+    val usbConnected by UsbService.isReceiverConnected.collectAsState()
     val context = LocalContext.current
     val battery = remember { context.getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) }
-    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Device compatibility", style = MaterialTheme.typography.headlineSmall)
-        StatusRow("Android desktop shell", "Ready")
+    Column(Modifier.fillMaxSize().padding(22.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
+        Text("System", style = MaterialTheme.typography.headlineSmall, color = Ink)
+        StatusRow("Desktop shell", "Ready")
         StatusRow("Battery", "$battery%")
-        StatusRow("USB receiver mode", "Prototype")
-        StatusRow("Wireless receiver", "Planned")
-        StatusRow("Native external display", "Device dependent")
+        StatusRow("USB receiver", if (usbConnected) "Connected" else "Disconnected")
+        StatusRow("Wireless display", "Planned")
         HorizontalDivider()
-        Text("This build provides the desktop shell and controller. Encoded video transport and trusted-device pairing are the next protocol milestones.")
+        Text("Device and desktop connection information.", color = Color.Gray)
     }
 }
 
 @Composable private fun StatusRow(label: String, value: String) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(label); Text(value, fontWeight = FontWeight.SemiBold) }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(label, color = Ink); Text(value, color = Ink, fontWeight = FontWeight.SemiBold) }
 }
 
 @Composable
-private fun ControllerSheet(onClose: () -> Unit) {
-    Box(Modifier.fillMaxSize().background(Color(0xAA000000)).clickable(onClick = onClose), contentAlignment = Alignment.Center) {
-        Card(Modifier.fillMaxWidth(0.88f).height(420.dp).clickable(enabled = false) {}, colors = CardDefaults.cardColors(containerColor = Color(0xFF111827))) {
-            Column(Modifier.fillMaxSize().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+private fun ControllerSheet(connected: Boolean, onClose: () -> Unit) {
+    Box(Modifier.fillMaxSize().background(Color(0x55000000)).clickable(onClick = onClose), contentAlignment = Alignment.Center) {
+        Card(Modifier.fillMaxWidth(.86f).height(410.dp).clickable(enabled = false) {}, colors = CardDefaults.cardColors(containerColor = Glass), shape = MaterialTheme.shapes.extraLarge) {
+            Column(Modifier.fillMaxSize().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column { Text("Desktop Controller", color = Color.White, style = MaterialTheme.typography.titleLarge); Text("● Session ready", color = Color(0xFF4ADE80)) }
+                    Column { Text("Desktop controller", color = Ink, style = MaterialTheme.typography.titleLarge); Text(if (connected) "● Connected" else "● Disconnected", color = if (connected) Color(0xFF16853D) else Color(0xFFC42B1C)) }
                     TextButton(onClick = onClose) { Text("Close") }
                 }
-                Surface(Modifier.fillMaxWidth().weight(1f).padding(vertical = 14.dp), color = Color(0xFF1E293B), shape = MaterialTheme.shapes.large) {
-                    Box(contentAlignment = Alignment.Center) { Text("TRACKPAD\nMove • tap • two-finger scroll", color = Color(0xFF94A3B8)) }
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button({}, Modifier.weight(1f)) { Text("Left click") }
-                    OutlinedButton({}, Modifier.weight(1f)) { Text("Right click") }
-                    OutlinedButton({}, Modifier.weight(1f)) { Text("Keyboard") }
-                }
+                Surface(Modifier.fillMaxWidth().weight(1f).padding(vertical = 14.dp), color = Color(0xFFE8EDF5), shape = MaterialTheme.shapes.large) { Box(contentAlignment = Alignment.Center) { Text("TRACKPAD\nMove • tap • two-finger scroll", color = Color.Gray) } }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) { Button({}, Modifier.weight(1f)) { Text("Left click") }; OutlinedButton({}, Modifier.weight(1f)) { Text("Right click") }; OutlinedButton({}, Modifier.weight(1f)) { Text("Keyboard") } }
             }
         }
     }

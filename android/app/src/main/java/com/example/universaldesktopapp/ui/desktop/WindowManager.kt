@@ -11,6 +11,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
@@ -51,11 +53,12 @@ fun WindowManager(
 
         Column(
             modifier = frameModifier.zIndex(window.zIndex.toFloat())
-                .clip(MaterialTheme.shapes.medium).background(Color(0xFFF8FAFC))
-                .border(1.dp, Color(0xFF475569), MaterialTheme.shapes.medium),
+                .shadow(24.dp, MaterialTheme.shapes.large)
+                .clip(MaterialTheme.shapes.large).background(MaterialTheme.colorScheme.surface)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.large),
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().height(44.dp).background(Color(0xFF172033))
+                modifier = Modifier.fillMaxWidth().height(46.dp).background(MaterialTheme.colorScheme.surfaceVariant)
                     .pointerInput(window.id, window.maximized) {
                         if (!window.maximized) detectDragGestures(
                             onDragStart = { onUpdate(window) },
@@ -65,23 +68,24 @@ fun WindowManager(
                             dragX = (dragX + amount.x).coerceAtLeast(0f)
                             dragY = (dragY + amount.y).coerceAtLeast(0f)
                         }
-                    }.padding(start = 12.dp),
+                    }.padding(start = 12.dp).zIndex(2f),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Text("${window.icon}  ${window.title}", color = Color.White, modifier = Modifier.weight(1f))
-                WindowButton("—") { onUpdate(window.copy(minimized = true)) }
-                WindowButton(if (window.maximized) "❐" else "□") { onUpdate(window.copy(maximized = !window.maximized)) }
-                WindowButton("×") { onClose(window) }
+                ShellIcon(window.icon, Modifier.size(24.dp))
+                Text(window.title, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+                WindowButton("—", false) { onUpdate(window.copy(minimized = true)) }
+                WindowButton(if (window.maximized) "❐" else "□", false) { onUpdate(window.copy(maximized = !window.maximized)) }
+                WindowButton("×", true) { onClose(window) }
             }
-            Box(Modifier.fillMaxSize().background(Color(0xFFF8FAFC))) { window.content() }
+            Box(Modifier.fillMaxSize().clipToBounds().background(MaterialTheme.colorScheme.background)) { window.content() }
         }
     }
 }
 
 @Composable
-private fun WindowButton(label: String, onClick: () -> Unit) {
+private fun WindowButton(label: String, destructive: Boolean, onClick: () -> Unit) {
     IconButton(onClick = onClick, modifier = Modifier.size(40.dp)) {
-        Text(label, color = Color.White, style = MaterialTheme.typography.titleMedium)
+        Text(label, color = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium)
     }
 }
