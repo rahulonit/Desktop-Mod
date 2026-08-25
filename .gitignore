@@ -1,0 +1,35 @@
+# Build outputs
+**/build/
+**/bin/
+**/obj/
+**/out/
+**/.gradle/
+.gradle-cache/
+.dotnet-home/
+
+# Local machine configuration
+**/local.properties
+*.user
+*.suo
+.idea/
+
+# IDE and OS files
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Generated reports and test results
+**/reports/
+**/test-results/
+
+# Bundled FFmpeg distributions are downloaded dependencies
+windows/ffmpeg*/
+windows/ffmpeg-*.zip
+windows/crash.log
+
+# Native build artifacts
+*.dll
+*.so
+*.dylib
+*.exe
+*.pdb
