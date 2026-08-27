@@ -4,6 +4,7 @@ using System.Buffers.Binary;
 using System.Net.Sockets;
 using System.Net;
 using System.Text;
+using System.Runtime.InteropServices;
 using UniversalMobileDesktop.Protocol;
 using UniversalMobileDesktop.Video;
 using UniversalMobileDesktop.FileTransfer;
@@ -12,13 +13,17 @@ namespace UniversalMobileDesktop.Receiver;
 
 public sealed class ReceiverForm : Form
 {
-    private readonly Label state = new();
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+    private readonly StatusPill state = new();
     private readonly Label telemetry = new();
-    private readonly Button connect = new();
-    private readonly Button fullscreen = new();
+    private readonly RoundedButton connect = new() { Primary = true, Icon = AccentIcon.Phone };
+    private readonly RoundedButton fullscreen = new() { Icon = AccentIcon.Fullscreen };
     private readonly PictureBox viewport = new();
-    private readonly Panel header = new();
-    private readonly Panel footer = new();
+    private readonly DesktopModDashboard dashboard = new();
+    private readonly GlassPanel header = new() { Radius = 20, GlassOpacity = 118 };
+    private readonly GlassPanel footer = new() { Radius = 0, GlassOpacity = 92 };
+    private readonly Panel headerHost = new();
     private readonly Label fullscreenHint = new();
     private readonly System.Windows.Forms.Timer hintTimer = new() { Interval = 3500 };
     private readonly System.Windows.Forms.Timer sessionTimer = new() { Interval = 1000 };
@@ -52,42 +57,42 @@ public sealed class ReceiverForm : Form
         Text = "Desktop Mod";
         MinimumSize = new Size(1024, 720);
         Size = new Size(1280, 800);
-        BackColor = Color.FromArgb(15, 23, 42);
+        BackColor = Color.FromArgb(3, 7, 18);
         ForeColor = Color.White;
         StartPosition = FormStartPosition.CenterScreen;
         WindowState = FormWindowState.Maximized;
         KeyPreview = true;
 
         // Header
-        header.Dock = DockStyle.Top;
-        header.Height = 72;
-        header.BackColor = Color.FromArgb(17, 24, 39);
+        headerHost.Dock = DockStyle.Top;
+        headerHost.Height = 108;
+        headerHost.BackColor = Color.FromArgb(3, 10, 29);
+        header.Height = 78;
+        header.Location = new Point(28, 15);
+        header.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         header.Padding = new Padding(20, 12, 20, 12);
         var title = new Label { Text = "◆  Desktop Mod", AutoSize = true, Font = new Font("Segoe UI", 17, FontStyle.Bold), Location = new Point(20, 18) };
         state.Text = "● Waiting for phone";
-        state.AutoSize = true;
+        title.Text = "Desktop Mod";
+        title.Font = new Font("Segoe UI", 17, FontStyle.Bold);
+        title.Location = new Point(76, 22);
+        state.Text = "●  Waiting for phone";
+        state.Size = new Size(178, 40);
         state.ForeColor = Color.FromArgb(148, 163, 184);
-        state.Location = new Point(340, 25);
+        state.Location = new Point(280, 19);
         connect.Text = "Connect phone";
-        connect.AutoSize = true;
-        connect.FlatStyle = FlatStyle.Flat;
-        connect.BackColor = Color.FromArgb(37, 99, 235);
-        connect.ForeColor = Color.White;
-        connect.FlatAppearance.BorderSize = 0;
-        connect.Padding = new Padding(12, 4, 12, 4);
+        connect.Size = new Size(216, 48);
         connect.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        connect.Location = new Point(Width - 190, 18);
+        connect.Location = new Point(Width - 250, 15);
         connect.Click += (_, _) => ToggleSession();
         fullscreen.Text = "Full screen";
-        fullscreen.AutoSize = true;
-        fullscreen.FlatStyle = FlatStyle.Flat;
-        fullscreen.BackColor = Color.FromArgb(51, 65, 85);
-        fullscreen.ForeColor = Color.White;
-        fullscreen.FlatAppearance.BorderSize = 0;
-        fullscreen.Padding = new Padding(12, 4, 12, 4);
+        fullscreen.Size = new Size(202, 48);
         fullscreen.Click += (_, _) => EnterFullscreen();
         header.Resize += (_, _) => PositionHeaderButtons();
-        header.Controls.AddRange([title, state, fullscreen, connect]);
+        var headerLogo = new AppLogoBadge { Location = new Point(20, 17), Size = new Size(44, 44) };
+        header.Controls.AddRange([headerLogo, title, state, fullscreen, connect]);
+        headerHost.Controls.Add(header);
+        headerHost.Resize += (_, _) => { header.Width = Math.Max(1, headerHost.ClientSize.Width - 56); PositionHeaderButtons(); };
 
         // Viewport (PictureBox for rendering decoded frames)
         viewport.Dock = DockStyle.Fill;
@@ -107,17 +112,29 @@ public sealed class ReceiverForm : Form
 
         // Footer
         footer.Dock = DockStyle.Bottom;
-        footer.Height = 48;
-        footer.BackColor = Color.FromArgb(17, 24, 39);
-        footer.Padding = new Padding(18, 14, 18, 8);
+        footer.Height = 54;
+        footer.Padding = new Padding(24, 16, 24, 8);
         telemetry.Text = "Waiting for Desktop Mod on USB tethering or Wi-Fi";
         telemetry.AutoSize = true;
         telemetry.ForeColor = Color.FromArgb(148, 163, 184);
-        footer.Controls.Add(telemetry);
+        var footerIcon = new IconBadge { Icon = AccentIcon.Shield, Accent = Color.FromArgb(45, 184, 154), Circular = true, Size = new Size(26, 26), Location = new Point(20, 13) };
+        telemetry.Location = new Point(56, 17);
+        footer.Controls.Add(telemetry); footer.Controls.Add(footerIcon);
 
+        dashboard.Dock = DockStyle.Fill;
+        dashboard.ConnectRequested += (_, _) => ToggleSession();
+        dashboard.StartDesktopRequested += (_, _) =>
+        {
+            dashboard.Visible = false;
+            viewport.Focus();
+        };
         Controls.Add(viewport);
+        Controls.Add(dashboard);
         Controls.Add(footer);
-        Controls.Add(header);
+        Controls.Add(headerHost);
+        dashboard.BringToFront();
+        footer.BringToFront();
+        headerHost.BringToFront();
 
         fullscreenHint.Text = "Full screen  •  Press Esc to exit";
         fullscreenHint.AutoSize = true;
@@ -152,7 +169,18 @@ public sealed class ReceiverForm : Form
         Shown += (_, _) =>
         {
             StartDiscoveryResponder();
+            TryStartAdbSession();
         };
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
+        {
+            var enabled = 1;
+            _ = DwmSetWindowAttribute(Handle, 20, ref enabled, sizeof(int));
+        }
     }
 
     private void PositionHeaderButtons()
@@ -169,7 +197,7 @@ public sealed class ReceiverForm : Form
         isFullscreen = true;
         previousWindowState = WindowState;
         previousBorderStyle = FormBorderStyle;
-        header.Visible = false;
+        headerHost.Visible = false;
         footer.Visible = false;
         FormBorderStyle = FormBorderStyle.None;
         WindowState = FormWindowState.Normal;
@@ -191,7 +219,7 @@ public sealed class ReceiverForm : Form
         fullscreenHint.Visible = false;
         TopMost = false;
         FormBorderStyle = previousBorderStyle;
-        header.Visible = true;
+        headerHost.Visible = true;
         footer.Visible = true;
         WindowState = previousWindowState;
         PositionHeaderButtons();
@@ -205,24 +233,7 @@ public sealed class ReceiverForm : Form
 
     private void PaintPlaceholder(object? sender, PaintEventArgs e)
     {
-        if (!isConnected)
-        {
-            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            using var titleFont = new Font("Segoe UI", 25, FontStyle.Bold);
-            using var bodyFont = new Font("Segoe UI", 11);
-            var center = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-            var bounds = viewport.ClientRectangle;
-            e.Graphics.DrawString("Connect Desktop Mod", titleFont, Brushes.White, new RectangleF(0, bounds.Height / 2f - 95, bounds.Width, 50), center);
-            e.Graphics.DrawString(
-                "USB without Developer Mode\n" +
-                "1   Connect a USB data cable and enable USB tethering on the phone\n" +
-                "2   Open Desktop Mod on both devices\n" +
-                "3   Select this PC on the phone and tap Connect\n\n" +
-                "Wi-Fi\n" +
-                "Join the same private network, select this PC on the phone, and tap Connect.\n" +
-                "Your phone stays usable. This is a separate desktop, not screen mirroring.",
-                bodyFont, Brushes.LightSlateGray, new RectangleF(60, bounds.Height / 2f - 25, bounds.Width - 120, 170), center);
-        }
+        if (!isConnected) e.Graphics.Clear(Color.FromArgb(3, 7, 18));
     }
 
     private void ToggleSession()
@@ -241,6 +252,7 @@ public sealed class ReceiverForm : Form
     private void ConnectToDevice(string host, string transportName)
     {
         connectionAttemptActive = true;
+        dashboard.SetState(DashboardState.Connecting);
         state.Text = "● Connecting...";
         state.ForeColor = Color.FromArgb(250, 204, 21);
         connect.Enabled = false;
@@ -281,6 +293,11 @@ public sealed class ReceiverForm : Form
                 PostToUi(() =>
                 {
                     isConnected = true;
+                    dashboard.SetState(DashboardState.Connected);
+                    dashboard.Visible = true;
+                    dashboard.BringToFront();
+                    header.BringToFront();
+                    footer.BringToFront();
                     state.Text = "● Phone connected";
                     state.ForeColor = Color.FromArgb(74, 222, 128);
                     connect.Text = "Disconnect";
@@ -326,7 +343,9 @@ public sealed class ReceiverForm : Form
                     Disconnect();
                     state.Text = "● Connection failed";
                     state.ForeColor = Color.FromArgb(248, 113, 113);
-                    telemetry.Text = reason;
+                    dashboard.Visible = true;
+                    dashboard.SetState(DashboardState.Failed, "The phone disconnected unexpectedly.");
+                    telemetry.Text = "Connection lost — The phone disconnected unexpectedly. Technical details are available in the error dialog.";
                     MessageBox.Show(
                         this,
                         $"Could not connect to the phone.\n\nReason: {reason}\n\n" +
@@ -584,6 +603,33 @@ public sealed class ReceiverForm : Form
         RunAdb(adb, "forward tcp:5000 tcp:5000");
     }
 
+    private void TryStartAdbSession()
+    {
+        new Thread(() =>
+        {
+            try
+            {
+                EnsureAdbForwarding();
+                PostToUi(() =>
+                {
+                    if (!isConnected && !connectionAttemptActive)
+                    {
+                        telemetry.Text = "Developer Mode detected • connecting over private ADB USB forwarding";
+                        ConnectToDevice("127.0.0.1", "ADB USB");
+                    }
+                });
+            }
+            catch (Exception error)
+            {
+                PostToUi(() =>
+                {
+                    if (!isConnected)
+                        telemetry.Text = $"ADB unavailable ({error.GetBaseException().Message}) • USB tethering and Wi-Fi remain available";
+                });
+            }
+        }) { IsBackground = true, Name = "DesktopModAdbDetection" }.Start();
+    }
+
     private static string? FindAdb()
     {
         var candidates = new List<string>();
@@ -658,6 +704,8 @@ public sealed class ReceiverForm : Form
         connect.BackColor = Color.FromArgb(37, 99, 235);
         connect.Enabled = true;
         telemetry.Text = "Waiting for Desktop Mod on USB tethering or Wi-Fi";
+        dashboard.Visible = true;
+        dashboard.SetState(DashboardState.Idle);
 
         viewport.Image = null;
         lock (frameLock)

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.display.DisplayManager
 import android.os.BatteryManager
+import android.provider.Settings
 import android.view.Display
 import com.example.universaldesktopapp.usb.UsbService
 import java.net.DatagramPacket
@@ -31,12 +32,15 @@ data class WirelessReceiver(
     val address: String,
     val platform: String,
     val port: Int,
+    val transport: String = "Wireless",
     val lastSeen: Long = System.currentTimeMillis(),
 )
 
 data class ConnectionSnapshot(
     val usbCableConnected: Boolean = false,
     val usbTetheringActive: Boolean = false,
+    val developerModeEnabled: Boolean = false,
+    val usbDebuggingEnabled: Boolean = false,
     val receiverConnected: Boolean = false,
     val receiverTransport: String? = null,
     val externalDisplays: List<ExternalDisplayInfo> = emptyList(),
@@ -91,6 +95,8 @@ object ConnectionMonitor : DisplayManager.DisplayListener {
         val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val plugged = battery?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0
         val usbCable = plugged == BatteryManager.BATTERY_PLUGGED_USB
+        val developerMode = Settings.Global.getInt(context.contentResolver, Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) == 1
+        val usbDebugging = Settings.Global.getInt(context.contentResolver, Settings.Global.ADB_ENABLED, 0) == 1
         val usbTethering = networkInterfaces().any { network ->
             network.isUp && !network.isLoopback && listOf("rndis", "usb", "ncm").any { network.name.contains(it, ignoreCase = true) }
         }
@@ -104,6 +110,8 @@ object ConnectionMonitor : DisplayManager.DisplayListener {
         mutableSnapshot.value = ConnectionSnapshot(
             usbCableConnected = usbCable,
             usbTetheringActive = usbTethering,
+            developerModeEnabled = developerMode,
+            usbDebuggingEnabled = usbDebugging,
             receiverConnected = UsbService.isReceiverConnected.value,
             receiverTransport = UsbService.receiverTransport.value,
             externalDisplays = external,
@@ -135,7 +143,11 @@ object ConnectionMonitor : DisplayManager.DisplayListener {
                             val text = String(response.data, 0, response.length, Charsets.UTF_8)
                             val parts = text.split('|')
                             if (parts.size >= 4 && parts[0] == "DESKTOP_MOD_RECEIVER_V1") {
-                                val item = WirelessReceiver(parts[1], response.address.hostAddress.orEmpty(), parts[2], parts[3].toIntOrNull() ?: 5000)
+                                val address = response.address.hostAddress.orEmpty()
+                                val item = WirelessReceiver(
+                                    parts[1], address, parts[2], parts[3].toIntOrNull() ?: 5000,
+                                    transport = classifyTransport(response.address),
+                                )
                                 receivers[item.address] = item
                             }
                         } catch (_: SocketTimeoutException) {
@@ -155,4 +167,28 @@ object ConnectionMonitor : DisplayManager.DisplayListener {
 
     private fun networkInterfaces(): List<NetworkInterface> =
         runCatching { NetworkInterface.getNetworkInterfaces()?.toList().orEmpty() }.getOrDefault(emptyList())
+
+    private fun classifyTransport(receiverAddress: InetAddress): String {
+        val matchingInterface = networkInterfaces().firstOrNull { network ->
+            network.interfaceAddresses.orEmpty().any { local ->
+                sameSubnet(local.address, receiverAddress, local.networkPrefixLength.toInt())
+            }
+        }
+        val name = matchingInterface?.name.orEmpty()
+        return if (listOf("rndis", "usb", "ncm").any { name.contains(it, ignoreCase = true) }) "USB" else "Wireless"
+    }
+
+    private fun sameSubnet(first: InetAddress?, second: InetAddress, prefixLength: Int): Boolean {
+        val a = first?.address ?: return false
+        val b = second.address
+        if (a.size != b.size || prefixLength < 0) return false
+        var bits = prefixLength
+        for (index in a.indices) {
+            if (bits <= 0) break
+            val mask = if (bits >= 8) 0xFF else (0xFF shl (8 - bits)) and 0xFF
+            if ((a[index].toInt() and mask) != (b[index].toInt() and mask)) return false
+            bits -= 8
+        }
+        return true
+    }
 }
