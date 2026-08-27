@@ -12,7 +12,7 @@ let package = Package(
         .target(name: "DesktopProtocol", path: "ios/Transport"),
         .target(name: "IOSStreaming", dependencies: ["DesktopProtocol"], path: "ios/Streaming"),
         .target(name: "IOSDesktopEngine", dependencies: ["DesktopProtocol", "IOSStreaming"], path: "ios/DesktopEngine"),
-        .target(name: "IOSDesktopUI", dependencies: ["IOSDesktopEngine"], path: "ios/DesktopUI"),
+        .target(name: "IOSDesktopUI", dependencies: ["IOSDesktopEngine"], path: "ios/DesktopUI", resources: [.process("Resources")]),
         .target(name: "IOSApp", dependencies: ["IOSDesktopUI"], path: "ios/App"),
         .target(name: "MacTransport", dependencies: ["DesktopProtocol"], path: "macos/Transport"),
         .target(name: "MacInput", dependencies: ["DesktopProtocol"], path: "macos/Input"),
@@ -20,7 +20,8 @@ let package = Package(
         .executableTarget(
             name: "MacReceiver",
             dependencies: ["DesktopProtocol", "MacTransport", "MacInput", "MacVideo"],
-            path: "macos/Receiver"
+            path: "macos/Receiver",
+            resources: [.process("Resources")]
         ),
         .testTarget(name: "DesktopProtocolTests", dependencies: ["DesktopProtocol"], path: "tests/apple"),
     ]

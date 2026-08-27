@@ -25,7 +25,7 @@ private struct ReceiverView: View {
 
     private var header: some View {
         HStack(spacing: 16) {
-            Image(systemName: "display.2").font(.title2.bold()).foregroundStyle(.cyan).frame(width: 44, height: 44).background(.blue.opacity(0.18), in: RoundedRectangle(cornerRadius: 12)).shadow(color: .blue.opacity(0.35), radius: 16)
+            Image("APP_icon", bundle: .module).resizable().scaledToFit().frame(width: 48, height: 48).shadow(color: .blue.opacity(0.35), radius: 16)
             Text("Desktop Mod").font(.system(size: 21, weight: .bold, design: .rounded))
             StatusPill(text: isConnected ? "Connected" : isConnecting ? "Connecting…" : status, kind: isConnected ? .success : isConnecting ? .working : .neutral)
             Spacer()
@@ -38,7 +38,7 @@ private struct ReceiverView: View {
         ScrollView {
             VStack(spacing: 28) {
                 VStack(spacing: 12) {
-                    Image(systemName: "rectangle.connected.to.line.below").font(.system(size: 28, weight: .semibold)).foregroundStyle(.cyan, .blue).frame(width: 64, height: 64).background(.blue.opacity(0.15), in: Circle())
+                    Image("APP_icon", bundle: .module).resizable().scaledToFit().frame(width: 96, height: 96).background(.blue.opacity(0.10), in: Circle()).shadow(color: .blue.opacity(0.30), radius: 20)
                     Text("Connect Desktop Mode").font(.system(size: 40, weight: .bold, design: .rounded))
                     Text("Choose a connection method to use your phone as a separate desktop.").font(.system(size: 17)).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 }
@@ -50,9 +50,9 @@ private struct ReceiverView: View {
     }
 
     @ViewBuilder private var methodCards: some View {
-        MethodCard(title: "USB Connection", icon: "cable.connector", accent: .blue, summary: "Fast and stable. Developer Mode is preferred; USB tethering remains available.", steps: ["Connect a USB data cable", "Open Desktop Mod", "Enable debugging or tethering", "Select this computer"], status: host == "127.0.0.1" ? "ADB device detected" : "Checking USB…") { showsConnect = true }
-        MethodCard(title: "Wi-Fi Connection", icon: "wifi", accent: .indigo, summary: "Connect wirelessly when both devices use the same private network.", steps: ["Join the same network", "Open both apps", "Select this Mac", "Confirm pairing"], status: "Searching…") { showsConnect = true }
-        MethodCard(title: "External Display", icon: "display", accent: .purple, summary: "Use USB-C, DisplayPort, or HDMI where independent output is supported.", steps: ["Connect the display", "Check capabilities", "Start when supported"], status: "Capability check") { status = "Display capability is reported by the phone." }
+        MethodCard(title: "USB Connection", image: "USB", accent: .blue, summary: "Fast and stable. Developer Mode is preferred; USB tethering remains available.", steps: ["Connect a USB data cable", "Open Desktop Mod", "Enable debugging or tethering", "Select this computer"], status: host == "127.0.0.1" ? "ADB device detected" : "Checking USB…") { showsConnect = true }
+        MethodCard(title: "Wi-Fi Connection", image: "WIFI", accent: .indigo, summary: "Connect wirelessly when both devices use the same private network.", steps: ["Join the same network", "Open both apps", "Select this Mac", "Confirm pairing"], status: "Searching…") { showsConnect = true }
+        MethodCard(title: "External Display", image: "HTMI", accent: .purple, summary: "Use USB-C, DisplayPort, or HDMI where independent output is supported.", steps: ["Connect the display", "Check capabilities", "Start when supported"], status: "Capability check") { status = "Display capability is reported by the phone." }
     }
 
     private var sessionView: some View {
@@ -93,8 +93,8 @@ private struct ReceiverView: View {
 private struct AtmosphericBackground: View { var body: some View { LinearGradient(colors: [Color(red: 0.02, green: 0.07, blue: 0.16), Color(red: 0.01, green: 0.03, blue: 0.08), .black.opacity(0.95)], startPoint: .topLeading, endPoint: .bottomTrailing).overlay(RadialGradient(colors: [.indigo.opacity(0.30), .clear], center: .topTrailing, startRadius: 10, endRadius: 520)).ignoresSafeArea() } }
 
 private struct MethodCard: View {
-    let title: String, icon: String, accent: Color, summary: String, steps: [String], status: String, action: () -> Void
-    var body: some View { Button(action: action) { VStack(alignment: .leading, spacing: 14) { Image(systemName: icon).font(.title2).foregroundStyle(accent).frame(width: 44, height: 44).background(accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 12)); Text(title).font(.title3.bold()); Text(summary).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true); VStack(alignment: .leading, spacing: 11) { ForEach(Array(steps.enumerated()), id: \.offset) { index, step in HStack(spacing: 10) { Text("\(index + 1)").font(.caption.bold()).frame(width: 28, height: 28).background(accent.gradient, in: Circle()); Text(step).font(.callout) } } }; Spacer(minLength: 4); Label(status, systemImage: "circle.fill").font(.caption.bold()).foregroundStyle(accent) }.frame(maxWidth: .infinity, minHeight: 300, alignment: .topLeading).padding(22).contentShape(Rectangle()) }.buttonStyle(.plain).background(Color(red: 0.08, green: 0.15, blue: 0.30).opacity(0.58), in: RoundedRectangle(cornerRadius: 20)).overlay(RoundedRectangle(cornerRadius: 20).stroke(accent.opacity(0.30))) }
+    let title: String, image: String, accent: Color, summary: String, steps: [String], status: String, action: () -> Void
+    var body: some View { Button(action: action) { VStack(alignment: .leading, spacing: 14) { Image(image, bundle: .module).resizable().scaledToFit().frame(width: 52, height: 52).padding(5).background(accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 14)); Text(title).font(.title3.bold()); Text(summary).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true); VStack(alignment: .leading, spacing: 11) { ForEach(Array(steps.enumerated()), id: \.offset) { index, step in HStack(spacing: 10) { Text("\(index + 1)").font(.caption.bold()).frame(width: 28, height: 28).background(accent.gradient, in: Circle()); Text(step).font(.callout).fixedSize(horizontal: false, vertical: true) } } }; Spacer(minLength: 4); Label(status, systemImage: "circle.fill").font(.caption.bold()).foregroundStyle(accent) }.frame(maxWidth: .infinity, minHeight: 318, alignment: .topLeading).padding(22).contentShape(Rectangle()) }.buttonStyle(.plain).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20)).background(Color(red: 0.08, green: 0.15, blue: 0.30).opacity(0.44), in: RoundedRectangle(cornerRadius: 20)).overlay(RoundedRectangle(cornerRadius: 20).stroke(accent.opacity(0.30))).shadow(color: .black.opacity(0.22), radius: 18, y: 9) }
 }
 
 private enum StatusKind: Equatable { case neutral, working, success }

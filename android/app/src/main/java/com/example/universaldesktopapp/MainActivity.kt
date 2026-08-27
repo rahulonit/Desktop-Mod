@@ -71,6 +71,25 @@ class MainActivity : ComponentActivity() {
   @Composable
   private fun ConnectionHubScreen(connection: ConnectionSnapshot) {
     val pairingCode by UsbService.pairingCode.collectAsStateWithLifecycle()
+    var selectedMethod by remember { mutableStateOf<ConnectionMethod?>(null) }
+    selectedMethod?.let { method ->
+      ConnectionGuidePage(connection, method) { selectedMethod = null }
+      return
+    }
+    PremiumConnectionHub(
+      connection = connection,
+      pairingCode = pairingCode,
+      onUsb = { selectedMethod = ConnectionMethod.USB },
+      onWifi = { selectedMethod = ConnectionMethod.WIFI },
+      onDisplay = { selectedMethod = ConnectionMethod.EXTERNAL_DISPLAY },
+      onDisconnect = { UsbService.disconnectReceiver() },
+      onReceiverConnect = { receiver, transport -> ConnectionMonitor.requestConnection(receiver, transport) },
+    )
+  }
+
+  @Composable
+  private fun LegacyConnectionHubScreen(connection: ConnectionSnapshot) {
+    val pairingCode by UsbService.pairingCode.collectAsStateWithLifecycle()
     val usbReceivers = connection.wirelessReceivers.filter { it.transport == "USB" }
     val wifiReceivers = connection.wirelessReceivers.filter { it.transport == "Wireless" }
     var selectedMethod by remember { mutableStateOf<ConnectionMethod?>(null) }

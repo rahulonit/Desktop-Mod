@@ -19,16 +19,16 @@ internal sealed class DesktopModDashboard : UserControl
     public DesktopModDashboard()
     {
         DoubleBuffered = true; BackColor = Color.FromArgb(2, 7, 22); AutoScroll = true; Padding = new Padding(24);
-        usb = new ConnectionCard("1. USB without Developer Mode", AccentIcon.Usb, Color.FromArgb(36, 145, 255),
+        usb = new ConnectionCard("1. USB without Developer Mode", AccentIcon.Usb, "USB.png", Color.FromArgb(36, 145, 255),
             "Connect via USB data cable and enable USB tethering on your phone.",
             [(AccentIcon.Usb, "Connect a USB data cable and enable USB tethering on the phone"), (AccentIcon.Devices, "Open Desktop Mod on both devices"), (AccentIcon.Monitor, "Select this PC on the phone and tap Connect")]);
-        wifi = new ConnectionCard("2. Wi-Fi", AccentIcon.Wifi, Color.FromArgb(105, 82, 245),
+        wifi = new ConnectionCard("2. Wi-Fi", AccentIcon.Wifi, "WIFI.png", Color.FromArgb(105, 82, 245),
             "Join the same private network to connect wirelessly.",
             [(AccentIcon.Wifi, "Join the same private network"), (AccentIcon.Monitor, "Select this PC on the phone"), (AccentIcon.Link, "Tap Connect to start")]);
         usb.ActionRequested += (_, _) => ConnectRequested?.Invoke(this, EventArgs.Empty); wifi.ActionRequested += (_, _) => ConnectRequested?.Invoke(this, EventArgs.Empty);
         start.Click += (_, _) => StartDesktopRequested?.Invoke(this, EventArgs.Empty);
 
-        var logo = new IconBadge { Icon = AccentIcon.Devices, Accent = Color.FromArgb(53, 138, 255), Size = new Size(82, 82), Anchor = AnchorStyles.None, Circular = true };
+        var logo = new AppLogoBadge { Size = new Size(96, 96), Anchor = AnchorStyles.None };
         var title = TextLabel("Connect Desktop Mode", 31, Color.White, FontStyle.Bold, ContentAlignment.MiddleCenter);
         var subtitle = TextLabel("Choose a connection method to use your phone as a separate desktop.", 12.5f, Color.FromArgb(186, 204, 235), FontStyle.Regular, ContentAlignment.MiddleCenter);
         title.Dock = subtitle.Dock = DockStyle.Fill;
@@ -81,14 +81,15 @@ internal sealed class ConnectionCard : GlassPanel
 {
     private readonly Label state;
     public event EventHandler? ActionRequested;
-    public ConnectionCard(string heading, AccentIcon iconType, Color accent, string description, (AccentIcon icon, string text)[] steps)
+    public ConnectionCard(string heading, AccentIcon iconType, string assetName, Color accent, string description, (AccentIcon icon, string text)[] steps)
     {
         Dock = DockStyle.Fill; Margin = new Padding(10); Padding = new Padding(24); Radius = 20; GlassOpacity = 115; Cursor = Cursors.Hand;
         var top = new Panel { Dock = DockStyle.Top, Height = 86, BackColor = Color.Transparent };
-        var icon = new IconBadge { Icon = iconType, Accent = accent, Size = new Size(62, 62), Location = new Point(0, 2) };
+        var icon = new IconBadge { Icon = iconType, Image = AssetImage(assetName), Accent = accent, Size = new Size(62, 62), Location = new Point(0, 2) };
         var title = new Label { Text = heading, Location = new Point(80, 2), Size = new Size(330, 30), Font = new Font("Segoe UI Variable Text", 14.5f, FontStyle.Bold), ForeColor = Color.White, BackColor = Color.Transparent, AutoEllipsis = true };
         var body = new Label { Text = description, Location = new Point(80, 35), Size = new Size(325, 47), Font = new Font("Segoe UI Variable Text", 10.5f), ForeColor = Color.FromArgb(195, 214, 244), BackColor = Color.Transparent };
         top.Controls.Add(icon); top.Controls.Add(title); top.Controls.Add(body);
+        top.Resize += (_, _) => { title.Width = Math.Max(80, top.ClientSize.Width - 84); body.Width = Math.Max(80, top.ClientSize.Width - 84); };
         var divider = new Panel { Dock = DockStyle.Top, Height = 1, BackColor = Color.FromArgb(48, 150, 178, 235) };
         var stepList = new StepList { Dock = DockStyle.Fill, Accent = accent, Steps = steps, Padding = new Padding(0, 18, 0, 0) };
         state = new Label { Dock = DockStyle.Bottom, Height = 24, Font = new Font("Segoe UI Variable Text", 9, FontStyle.Bold), ForeColor = accent, BackColor = Color.Transparent };
@@ -100,6 +101,7 @@ internal sealed class ConnectionCard : GlassPanel
     private void Forward(object? sender, EventArgs e) => ActionRequested?.Invoke(this, EventArgs.Empty);
     private void HoverOn(object? sender, EventArgs e) { Hovered = true; Invalidate(); }
     private void HoverOff(object? sender, EventArgs e) { Hovered = false; Invalidate(); }
+    private static Image? AssetImage(string name) { try { var path = Path.Combine(AppContext.BaseDirectory, "assets", name); return File.Exists(path) ? Image.FromFile(path) : null; } catch { return null; } }
 }
 
 internal sealed class StepList : Control
@@ -111,12 +113,13 @@ internal sealed class StepList : Control
     {
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; var y = Padding.Top;
         using var font = new Font("Segoe UI Variable Text", 10.5f); using var badgeFont = new Font("Segoe UI", 9, FontStyle.Bold); using var textBrush = new SolidBrush(Color.FromArgb(225, 234, 249));
-        for (var i = 0; i < Steps.Length; i++, y += 53) { using var badge = new SolidBrush(Color.FromArgb(205, Accent)); e.Graphics.FillEllipse(badge, 0, y, 34, 34); TextRenderer.DrawText(e.Graphics, (i + 1).ToString(), badgeFont, new Rectangle(0, y, 34, 34), Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter); TextRenderer.DrawText(e.Graphics, Steps[i].text, font, new Rectangle(49, y - 2, Math.Max(1, Width - 49), 45), textBrush.Color, TextFormatFlags.WordBreak | TextFormatFlags.VerticalCenter); }
+        for (var i = 0; i < Steps.Length; i++, y += 44) { using var badge = new SolidBrush(Color.FromArgb(205, Accent)); e.Graphics.FillEllipse(badge, 0, y, 32, 32); TextRenderer.DrawText(e.Graphics, (i + 1).ToString(), badgeFont, new Rectangle(0, y, 32, 32), Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter); TextRenderer.DrawText(e.Graphics, Steps[i].text, font, new Rectangle(48, y - 2, Math.Max(1, Width - 48), 38), textBrush.Color, TextFormatFlags.WordBreak | TextFormatFlags.VerticalCenter); }
     }
 }
 
 internal sealed class IconBadge : Control
 {
+    public Image? Image { get; set; }
     public AccentIcon Icon { get; set; }
     public Color Accent { get; set; } = Color.RoyalBlue;
     public bool Circular { get; set; }
@@ -126,7 +129,8 @@ internal sealed class IconBadge : Control
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; var rect = new Rectangle(1, 1, Width - 3, Height - 3); using var path = Drawing.Round(rect, Circular ? rect.Width / 2 : 13);
         using var glow = new SolidBrush(Color.FromArgb(42, Accent)); e.Graphics.FillEllipse(glow, -6, -6, Width + 12, Height + 12);
         using var fill = new LinearGradientBrush(rect, Color.FromArgb(235, Accent), Color.FromArgb(160, 52, 57, 210), 45f); e.Graphics.FillPath(fill, path); using var border = new Pen(Color.FromArgb(120, 170, 215, 255)); e.Graphics.DrawPath(border, path);
-        using var pen = new Pen(Color.White, Math.Max(2f, Width / 24f)) { StartCap = LineCap.Round, EndCap = LineCap.Round }; Drawing.DrawIcon(e.Graphics, pen, Icon, rect);
+        if (Image is not null) e.Graphics.DrawImage(Image, new Rectangle(7, 7, Width - 14, Height - 14));
+        else { using var pen = new Pen(Color.White, Math.Max(2f, Width / 24f)) { StartCap = LineCap.Round, EndCap = LineCap.Round }; Drawing.DrawIcon(e.Graphics, pen, Icon, rect); }
     }
 }
 
@@ -177,7 +181,7 @@ internal sealed class AppLogoBadge : Control
 {
     private readonly Image? logo;
     public AppLogoBadge() { SetStyle(ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true); BackColor = Color.Transparent; var path = Path.Combine(AppContext.BaseDirectory, "assets", "App_icon.png"); try { if (File.Exists(path)) logo = Image.FromFile(path); } catch { } }
-    protected override void OnPaint(PaintEventArgs e) { e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; var rect = new Rectangle(0, 0, Width - 1, Height - 1); using var clip = Drawing.Round(rect, Math.Max(9, Width / 4)); var previous = e.Graphics.Clip; e.Graphics.SetClip(clip); if (logo is not null) e.Graphics.DrawImage(logo, rect, new Rectangle(105, 105, Math.Max(1, logo.Width - 210), Math.Max(1, logo.Height - 210)), GraphicsUnit.Pixel); else { using var fill = new LinearGradientBrush(rect, Color.DeepSkyBlue, Color.BlueViolet, 45f); e.Graphics.FillPath(fill, clip); } e.Graphics.Clip = previous; using var border = new Pen(Color.FromArgb(115, 113, 177, 255)); e.Graphics.DrawPath(border, clip); }
+    protected override void OnPaint(PaintEventArgs e) { e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; var rect = new Rectangle(0, 0, Width - 1, Height - 1); using var glow = new SolidBrush(Color.FromArgb(40, 55, 125, 255)); e.Graphics.FillEllipse(glow, 0, 0, Width - 1, Height - 1); if (logo is not null) e.Graphics.DrawImage(logo, new Rectangle(4, 4, Width - 8, Height - 8)); else { using var fill = new LinearGradientBrush(rect, Color.DeepSkyBlue, Color.BlueViolet, 45f); e.Graphics.FillEllipse(fill, rect); } }
 }
 
 internal static class Drawing

@@ -22,7 +22,7 @@ public sealed class ReceiverForm : Form
     private readonly PictureBox viewport = new();
     private readonly DesktopModDashboard dashboard = new();
     private readonly GlassPanel header = new() { Radius = 20, GlassOpacity = 118 };
-    private readonly GlassPanel footer = new() { Radius = 0, GlassOpacity = 92 };
+    private readonly GlassPanel footer = new() { Radius = 1, GlassOpacity = 158 };
     private readonly Panel headerHost = new();
     private readonly Label fullscreenHint = new();
     private readonly System.Windows.Forms.Timer hintTimer = new() { Interval = 3500 };
