@@ -1,3 +1,4 @@
 <resources>
+    <string name="accessibility_service_description">Allows an explicitly connected desktop receiver to control this device.</string>
     <string name="app_name">Desktop Mod</string>
 </resources>

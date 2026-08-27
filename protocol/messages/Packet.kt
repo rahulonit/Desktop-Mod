@@ -10,7 +10,11 @@ enum class PacketType(val value: Byte) {
     PairingResponse(0x03),
     VideoFrame(0x04),
     MouseEvent(0x05),
-    KeyEvent(0x06);
+    KeyEvent(0x06),
+    Clipboard(0x07),
+    FileMetadata(0x08),
+    FileChunk(0x09),
+    FileComplete(0x0A);
 
     companion object {
         fun fromValue(value: Byte): PacketType? = entries.find { it.value == value }
@@ -27,21 +31,14 @@ class Packet(val type: PacketType, val payload: ByteArray) {
     }
 
     companion object {
+        private const val MAX_PAYLOAD_SIZE = 32 * 1024 * 1024
+
         fun deserialize(inputStream: DataInputStream): Packet? {
-            return try {
-                val length = inputStream.readInt()
-                val typeByte = inputStream.readByte()
-                val payload = ByteArray(length)
-                inputStream.readFully(payload)
-                
-                val type = PacketType.fromValue(typeByte) ?: return null
-                Packet(type, payload)
-            } catch (e: EOFException) {
-                null
-            } catch (e: Exception) {
-                e.printStackTrace()
-                null
-            }
+            val length = try { inputStream.readInt() } catch (_: EOFException) { return null }
+            require(length in 0..MAX_PAYLOAD_SIZE) { "Invalid packet length: $length" }
+            val typeByte = inputStream.readByte()
+            val type = requireNotNull(PacketType.fromValue(typeByte)) { "Unknown packet type: $typeByte" }
+            return Packet(type, ByteArray(length).also(inputStream::readFully))
         }
     }
 }

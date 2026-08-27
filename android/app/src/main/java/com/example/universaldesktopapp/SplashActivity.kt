@@ -95,11 +95,7 @@ class SplashActivity : Activity(), TextureView.SurfaceTextureListener {
     }
 
     private fun releasePlayer() {
-        player?.runCatching {
-            stop()
-            reset()
-            release()
-        }
+        player?.runCatching { release() }
         player = null
     }
 

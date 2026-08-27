@@ -10,5 +10,15 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Protocol\Protocol.csproj" />
+    <ProjectReference Include="..\Transport\Transport.csproj" />
+    <ProjectReference Include="..\Video\Video.csproj" />
+    <ProjectReference Include="..\Input\Input.csproj" />
+    <ProjectReference Include="..\FileTransfer\FileTransfer.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('..\ffmpeg8\ffmpeg-8.1.2-full_build-shared\bin')">
+    <Content Include="..\ffmpeg8\ffmpeg-8.1.2-full_build-shared\bin\*.dll">
+      <Link>ffmpeg\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 </Project>

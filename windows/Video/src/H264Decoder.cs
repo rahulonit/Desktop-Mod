@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using System.Threading;
 using FFmpeg.AutoGen.Bindings.DynamicallyLoaded;
 using FFmpeg.AutoGen.Abstractions;
 
@@ -16,17 +17,28 @@ namespace UniversalMobileDesktop.Video
         private bool _initialized;
         private int _lastWidth;
         private int _lastHeight;
+        private static bool _bindingsInitialized;
+        private readonly SynchronizationContext? _callbackContext;
 
         public event Action<Bitmap>? OnFrameDecoded;
+
+        public H264Decoder(SynchronizationContext? callbackContext = null)
+        {
+            _callbackContext = callbackContext ?? SynchronizationContext.Current;
+        }
 
         public static void SetFFmpegPath(string path)
         {
             DynamicallyLoadedBindings.LibrariesPath = path;
             DynamicallyLoadedBindings.Initialize();
+            _bindingsInitialized = true;
         }
 
         public void Initialize()
         {
+            if (!_bindingsInitialized)
+                throw new InvalidOperationException("Call H264Decoder.SetFFmpegPath() before Initialize().");
+            if (_initialized) return;
             var codec = ffmpeg.avcodec_find_decoder(AVCodecID.AV_CODEC_ID_H264);
             if (codec == null)
                 throw new Exception("H.264 codec not found");
@@ -83,7 +95,7 @@ namespace UniversalMobileDesktop.Video
                 _swsContext = ffmpeg.sws_getContext(
                     width, height, (AVPixelFormat)_decodedFrame->format,
                     width, height, AVPixelFormat.AV_PIX_FMT_BGR24,
-                    (int)SwsFlags.SWS_BILINEAR, null, null, null);
+                    2, null, null, null); // SWS_BILINEAR (binding 8.x omits the generated constant)
 
                 _lastWidth = width;
                 _lastHeight = height;
@@ -107,7 +119,10 @@ namespace UniversalMobileDesktop.Video
                 dstData, dstLinesize);
 
             bitmap.UnlockBits(bmpData);
-            OnFrameDecoded?.Invoke(bitmap);
+            var handler = OnFrameDecoded;
+            if (handler is null) { bitmap.Dispose(); return; }
+            if (_callbackContext is null) handler(bitmap);
+            else _callbackContext.Post(_ => handler(bitmap), null);
         }
 
         public void Dispose()
@@ -120,21 +135,25 @@ namespace UniversalMobileDesktop.Video
 
             if (_packet != null)
             {
-                fixed (AVPacket** pp = &_packet)
-                    ffmpeg.av_packet_free(pp);
+                var packet = _packet;
+                ffmpeg.av_packet_free(&packet);
+                _packet = null;
             }
 
             if (_decodedFrame != null)
             {
-                fixed (AVFrame** pp = &_decodedFrame)
-                    ffmpeg.av_frame_free(pp);
+                var frame = _decodedFrame;
+                ffmpeg.av_frame_free(&frame);
+                _decodedFrame = null;
             }
 
             if (_codecContext != null)
             {
-                fixed (AVCodecContext** pp = &_codecContext)
-                    ffmpeg.avcodec_free_context(pp);
+                var context = _codecContext;
+                ffmpeg.avcodec_free_context(&context);
+                _codecContext = null;
             }
+            _initialized = false;
         }
     }
 }

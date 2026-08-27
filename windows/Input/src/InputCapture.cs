@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using UniversalMobileDesktop.Protocol;
 
 namespace UniversalMobileDesktop.Input
@@ -16,9 +17,9 @@ namespace UniversalMobileDesktop.Input
         {
             // Serialize mouse state into byte array (e.g. 12 bytes: x(4), y(4), state(4))
             byte[] payload = new byte[12];
-            BitConverter.GetBytes(x).CopyTo(payload, 0);
-            BitConverter.GetBytes(y).CopyTo(payload, 4);
-            BitConverter.GetBytes(buttonState).CopyTo(payload, 8);
+            BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(0, 4), x);
+            BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(4, 4), y);
+            BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(8, 4), buttonState);
 
             var packet = new Packet(PacketType.MouseEvent, payload);
             OnInputPacketReady?.Invoke(packet);
@@ -27,7 +28,7 @@ namespace UniversalMobileDesktop.Input
         public void SendKeyEvent(int keyCode, bool isKeyDown)
         {
             byte[] payload = new byte[5];
-            BitConverter.GetBytes(keyCode).CopyTo(payload, 0);
+            BinaryPrimitives.WriteInt32BigEndian(payload.AsSpan(0, 4), keyCode);
             payload[4] = (byte)(isKeyDown ? 1 : 0);
 
             var packet = new Packet(PacketType.KeyEvent, payload);

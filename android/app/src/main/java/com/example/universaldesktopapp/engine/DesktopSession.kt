@@ -1,11 +1,11 @@
 package com.example.universaldesktopapp.engine
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
-import android.media.ImageReader
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaFormat
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
@@ -16,7 +16,6 @@ import android.view.MotionEvent
 import com.example.universaldesktopapp.protocol.Packet
 import com.example.universaldesktopapp.protocol.PacketType
 import java.nio.ByteBuffer
-import java.io.ByteArrayOutputStream
 
 class DesktopSession(
     private val context: Context,
@@ -27,62 +26,74 @@ class DesktopSession(
     private val jpegQuality: Int = 94,
     private val maxFramesPerSecond: Int = 60,
 ) {
+    private object MouseAction {
+        const val MOVE = 0
+        const val DOWN = 1
+        const val UP = 2
+        const val SCROLL_UP = 3
+        const val SCROLL_DOWN = 4
+        const val CONTEXT_MENU = 5
+        const val CONTEXT_MENU_RELEASE = 6
+    }
     private var virtualDisplay: VirtualDisplay? = null
     private var presentation: DesktopPresentation? = null
-    private var imageReader: ImageReader? = null
+    private var encoder: MediaCodec? = null
     private var captureThread: HandlerThread? = null
     @Volatile private var isStreaming = false
-    private var lastEncodedFrameAt = 0L
 
     fun startSession(onFrameReady: (ByteArray) -> Unit) {
         if (isStreaming) return
         isStreaming = true
 
-        val thread = HandlerThread("DesktopFrameCapture").also { it.start() }
+        val thread = HandlerThread("DesktopH264Encoder").also { it.start() }
         captureThread = thread
-        val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-        imageReader = reader
-
-        reader.setOnImageAvailableListener({ source ->
-            val image = source.acquireLatestImage() ?: return@setOnImageAvailableListener
-            try {
-                if (!isStreaming) return@setOnImageAvailableListener
-                val now = android.os.SystemClock.elapsedRealtime()
-                val minimumFrameInterval = 1_000L / maxFramesPerSecond.coerceAtLeast(1)
-                if (now - lastEncodedFrameAt < minimumFrameInterval) return@setOnImageAvailableListener
-                lastEncodedFrameAt = now
-
-                val plane = image.planes[0]
-                val pixelStride = plane.pixelStride
-                val rowStride = plane.rowStride
-                val paddedWidth = width + (rowStride - pixelStride * width) / pixelStride
-                val padded = Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888)
-                padded.copyPixelsFromBuffer(plane.buffer)
-                val frame = if (paddedWidth == width) padded
-                    else Bitmap.createBitmap(padded, 0, 0, width, height)
-
-                val bytes = ByteArrayOutputStream().use { output ->
-                    frame.compress(Bitmap.CompressFormat.JPEG, jpegQuality.coerceIn(55, 96), output)
-                    output.toByteArray()
-                }
-                if (frame !== padded) frame.recycle()
-                padded.recycle()
-                if (isStreaming && bytes.isNotEmpty()) onFrameReady(bytes)
-            } catch (error: Exception) {
-                if (isStreaming) Log.e("DesktopSession", "Frame capture failed", error)
-            } finally {
-                image.close()
-            }
-        }, Handler(thread.looper))
+        val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        encoder = codec
+        val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
+            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+            setInteger(MediaFormat.KEY_BIT_RATE, if (jpegQuality >= 90) 12_000_000 else 6_000_000)
+            setInteger(MediaFormat.KEY_FRAME_RATE, maxFramesPerSecond.coerceIn(15, 60))
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
+            setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+        }
+        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        val inputSurface = codec.createInputSurface()
+        codec.start()
 
         virtualDisplay = displayManager.createVirtualDisplay(
             "DesktopMod",
             width,
             height,
             densityDpi,
-            reader.surface,
+            inputSurface,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
         )
+
+        val handler = Handler(thread.looper)
+        val drain = object : Runnable {
+            override fun run() {
+                val activeCodec = encoder ?: return
+                val info = MediaCodec.BufferInfo()
+                try {
+                    while (isStreaming) {
+                        val index = activeCodec.dequeueOutputBuffer(info, 0)
+                        if (index < 0) break
+                        activeCodec.getOutputBuffer(index)?.let { buffer ->
+                            if (info.size > 0) {
+                                buffer.position(info.offset); buffer.limit(info.offset + info.size)
+                                val bytes = ByteArray(info.size); buffer.get(bytes)
+                                onFrameReady(bytes)
+                            }
+                        }
+                        activeCodec.releaseOutputBuffer(index, false)
+                    }
+                } catch (error: Exception) {
+                    if (isStreaming) Log.e("DesktopSession", "H.264 encoding failed", error)
+                }
+                if (isStreaming) handler.postDelayed(this, 4)
+            }
+        }
+        handler.post(drain)
 
         attachPresentationWhenReady()
     }
@@ -109,15 +120,18 @@ class DesktopSession(
 
     fun stopSession() {
         isStreaming = false
-        Handler(Looper.getMainLooper()).post {
+        Handler(Looper.getMainLooper()).postAtFrontOfQueue {
             presentation?.dismiss()
             presentation = null
+            releaseCaptureResources()
         }
+    }
+
+    private fun releaseCaptureResources() {
         virtualDisplay?.release()
         virtualDisplay = null
-        imageReader?.setOnImageAvailableListener(null, null)
-        imageReader?.close()
-        imageReader = null
+        encoder?.runCatching { signalEndOfInputStream(); stop(); release() }
+        encoder = null
         captureThread?.quitSafely()
         captureThread = null
     }
@@ -149,12 +163,12 @@ class DesktopSession(
     private fun dispatchPointer(x: Float, y: Float, action: Int) {
         val view = presentation?.window?.decorView ?: return
         val now = android.os.SystemClock.uptimeMillis()
-        if (action == 5) {
+        if (action == MouseAction.CONTEXT_MENU) {
             DesktopInputBus.showDesktopMenu(x.toInt(), y.toInt())
             return
         }
-        if (action == 6) return
-        if (action == 3 || action == 4) {
+        if (action == MouseAction.CONTEXT_MENU_RELEASE) return
+        if (action == MouseAction.SCROLL_UP || action == MouseAction.SCROLL_DOWN) {
             val properties = arrayOf(MotionEvent.PointerProperties().apply {
                 id = 0
                 toolType = MotionEvent.TOOL_TYPE_MOUSE
@@ -162,7 +176,7 @@ class DesktopSession(
             val coordinates = arrayOf(MotionEvent.PointerCoords().apply {
                 this.x = x
                 this.y = y
-                setAxisValue(MotionEvent.AXIS_VSCROLL, if (action == 3) 1f else -1f)
+                setAxisValue(MotionEvent.AXIS_VSCROLL, if (action == MouseAction.SCROLL_UP) 1f else -1f)
             })
             val scrollEvent = MotionEvent.obtain(
                 now, now, MotionEvent.ACTION_SCROLL, 1, properties, coordinates,
@@ -173,9 +187,9 @@ class DesktopSession(
             return
         }
         val androidAction = when (action) {
-            0 -> MotionEvent.ACTION_MOVE
-            1 -> MotionEvent.ACTION_DOWN
-            2 -> MotionEvent.ACTION_UP
+            MouseAction.MOVE -> MotionEvent.ACTION_MOVE
+            MouseAction.DOWN -> MotionEvent.ACTION_DOWN
+            MouseAction.UP -> MotionEvent.ACTION_UP
             else -> return
         }
         val event = MotionEvent.obtain(now, now, androidAction, x, y, 0).apply {

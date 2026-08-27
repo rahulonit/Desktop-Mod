@@ -11,7 +11,11 @@ namespace UniversalMobileDesktop.Protocol
         PairingResponse = 0x03,
         VideoFrame = 0x04,
         MouseEvent = 0x05,
-        KeyEvent = 0x06
+        KeyEvent = 0x06,
+        Clipboard = 0x07,
+        FileMetadata = 0x08,
+        FileChunk = 0x09,
+        FileComplete = 0x0A
     }
 
     public class Packet
@@ -51,6 +55,8 @@ namespace UniversalMobileDesktop.Protocol
                 if (length < 0 || length > 16 * 1024 * 1024)
                     throw new InvalidDataException($"Invalid packet length: {length}");
                 byte typeByte = reader.ReadByte();
+                if (!Enum.IsDefined(typeof(PacketType), typeByte))
+                    throw new InvalidDataException($"Unknown packet type: 0x{typeByte:X2}");
                 byte[] payload = reader.ReadBytes(length);
                 if (payload.Length != length) return null;
                 

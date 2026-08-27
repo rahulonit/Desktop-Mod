@@ -1865,6 +1865,14 @@ If this works smoothly, the same platform can then expand to:
 
 **Project Stage:** Concept / Architecture / MVP Planning
 
+## Apple platform source
+
+The repository now includes a Swift Package for iOS and macOS. Open `Package.swift`
+in Xcode to build the shared packet protocol, integrate the `UniversalDesktopIOS`
+library product into an iOS App target, or run the `UniversalDesktopReceiver`
+macOS executable. Platform-specific setup notes live in `ios/README.md` and
+`macos/README.md`.
+
 **Recommended First Platform Pair:** Android + Windows
 
 **Recommended First Reference Device:** OPPO F19 Pro

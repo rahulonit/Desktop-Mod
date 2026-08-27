@@ -4,7 +4,10 @@
 **/obj/
 **/out/
 **/.gradle/
+**/.kotlin/
 .gradle-cache/
+.android-home/
+.kotlin-daemon/
 .dotnet-home/
 
 # Local machine configuration

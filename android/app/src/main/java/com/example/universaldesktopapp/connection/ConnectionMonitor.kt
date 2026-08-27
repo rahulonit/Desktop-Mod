@@ -63,6 +63,16 @@ object ConnectionMonitor : DisplayManager.DisplayListener {
         thread(name = "DesktopModDiscovery", isDaemon = true) { discoveryLoop() }
     }
 
+    fun stop() {
+        if (!running) return
+        running = false
+        displayManager?.unregisterDisplayListener(this)
+        displayManager = null
+        appContext = null
+        receivers.clear()
+        mutableSnapshot.value = ConnectionSnapshot(wirelessSearching = false)
+    }
+
     fun requestConnection(receiver: WirelessReceiver, transport: String) {
         UsbService.nextTransportHint.value = transport
         thread(name = "DesktopModWirelessStart", isDaemon = true) {

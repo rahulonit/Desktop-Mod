@@ -26,7 +26,7 @@ internal fun launchInstalledApp(context: Context, packageName: String) {
     val options = ActivityOptions.makeBasic()
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        options.launchDisplayId = context.display.displayId
+        context.display?.let { options.launchDisplayId = it.displayId }
     }
     if (freeformSupported) {
         val metrics = context.resources.displayMetrics

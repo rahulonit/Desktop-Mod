@@ -5,6 +5,8 @@ using System.Net.Sockets;
 using System.Net;
 using System.Text;
 using UniversalMobileDesktop.Protocol;
+using UniversalMobileDesktop.Video;
+using UniversalMobileDesktop.FileTransfer;
 
 namespace UniversalMobileDesktop.Receiver;
 
@@ -21,7 +23,7 @@ public sealed class ReceiverForm : Form
     private readonly System.Windows.Forms.Timer hintTimer = new() { Interval = 3500 };
     private readonly System.Windows.Forms.Timer sessionTimer = new() { Interval = 1000 };
     private int seconds;
-    private bool isConnected;
+    private volatile bool isConnected;
     private volatile bool connectionAttemptActive;
     private TcpClient? tcpClient;
     private Thread? receiveThread;
@@ -39,6 +41,11 @@ public sealed class ReceiverForm : Form
     private readonly object frameLock = new();
     private Bitmap? latestFrame;
     private int renderPending;
+    private H264Decoder? h264Decoder;
+    private readonly FileTransferManager fileTransfers = new();
+    private readonly System.Windows.Forms.Timer clipboardTimer = new() { Interval = 750 };
+    private string lastClipboardText = string.Empty;
+    private bool applyingRemoteClipboard;
 
     public ReceiverForm()
     {
@@ -61,7 +68,7 @@ public sealed class ReceiverForm : Form
         state.AutoSize = true;
         state.ForeColor = Color.FromArgb(148, 163, 184);
         state.Location = new Point(340, 25);
-        connect.Text = "Connection help";
+        connect.Text = "Connect phone";
         connect.AutoSize = true;
         connect.FlatStyle = FlatStyle.Flat;
         connect.BackColor = Color.FromArgb(37, 99, 235);
@@ -87,6 +94,9 @@ public sealed class ReceiverForm : Form
         viewport.BackColor = Color.Black;
         viewport.SizeMode = PictureBoxSizeMode.Zoom;
         viewport.TabStop = true;
+        viewport.AllowDrop = true;
+        viewport.DragEnter += (_, e) => e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
+        viewport.DragDrop += (_, e) => SendDroppedFiles((string[]?)e.Data?.GetData(DataFormats.FileDrop));
         viewport.MouseDown += (_, eventArgs) => SendPointer(eventArgs.Location, eventArgs.Button == MouseButtons.Right ? 5 : 1);
         viewport.MouseUp += (_, eventArgs) => SendPointer(eventArgs.Location, eventArgs.Button == MouseButtons.Right ? 6 : 2);
         viewport.MouseMove += (_, eventArgs) => SendPointer(eventArgs.Location, 0);
@@ -134,6 +144,8 @@ public sealed class ReceiverForm : Form
             seconds++;
             telemetry.Text = $"Transport active • {frameCount} encoded frames received • {seconds}s • {(frameCount > 0 ? frameCount / seconds : 0)} FPS";
         };
+        clipboardTimer.Tick += (_, _) => SyncLocalClipboard();
+        fileTransfers.FileReceived += path => PostToUi(() => telemetry.Text = $"Received {Path.GetFileName(path)}");
 
         // Draw initial placeholder text
         viewport.Paint += PaintPlaceholder;
@@ -219,14 +231,11 @@ public sealed class ReceiverForm : Form
             connectionAttemptActive = false;
             Disconnect();
         }
-        else MessageBox.Show(
-            this,
-            "Start the connection from the Desktop Mod app on your phone.\n\n" +
-            "For USB: connect a data cable, enable USB tethering, then select this PC.\n" +
-            "For Wi-Fi: connect both devices to the same private network, then select this PC.",
-            "Connect Desktop Mod",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Information);
+        else
+        {
+            var host = PromptForPhoneAddress();
+            if (!string.IsNullOrWhiteSpace(host)) ConnectToDevice(host, "Local network");
+        }
     }
 
     private void ConnectToDevice(string host, string transportName)
@@ -241,21 +250,35 @@ public sealed class ReceiverForm : Form
             try
             {
                 // Establish the phone session before loading the comparatively heavy decoder runtime.
-                tcpClient = new TcpClient();
-                tcpClient.NoDelay = true;
-                tcpClient.ReceiveBufferSize = transportName == "USB" ? 512 * 1024 : 192 * 1024;
-                tcpClient.ConnectAsync(host, 5000).Wait(TimeSpan.FromSeconds(5));
-                if (!tcpClient.Connected)
+                var client = new TcpClient {
+                    NoDelay = true,
+                    ReceiveBufferSize = transportName == "USB" ? 512 * 1024 : 192 * 1024
+                };
+                tcpClient = client;
+                client.ConnectAsync(host, 5000).Wait(TimeSpan.FromSeconds(5));
+                if (!client.Connected)
                     throw new IOException("The phone did not accept the desktop connection within 5 seconds.");
+                var stream = client.GetStream();
+                using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
+                var challengePacket = Packet.Deserialize(reader);
+                if (challengePacket?.Type != PacketType.Handshake || challengePacket.Payload.Length != 32)
+                    throw new InvalidDataException("The phone did not provide a valid pairing challenge.");
+                var code = PromptForPairingCode();
+                if (code is null) throw new OperationCanceledException("Pairing was cancelled.");
+                SendPacketTo(client, new Packet(PacketType.PairingResponse, PairingSecurity.CreateResponse(code, challengePacket.Payload)));
+                var pairingResult = Packet.Deserialize(reader);
+                if (pairingResult?.Type != PacketType.PairingResponse || pairingResult.Payload.Length != 1 || pairingResult.Payload[0] != 1)
+                    throw new UnauthorizedAccessException("The pairing code was rejected.");
+
                 isConnected = true;
-                BeginInvoke(() =>
+                PostToUi(() =>
                 {
                     state.Text = $"● Phone connected • {transportName}";
                     state.ForeColor = Color.FromArgb(74, 222, 128);
                     telemetry.Text = $"{transportName} transport connected • {host}";
                 });
 
-                BeginInvoke(() =>
+                PostToUi(() =>
                 {
                     isConnected = true;
                     state.Text = "● Phone connected";
@@ -266,12 +289,10 @@ public sealed class ReceiverForm : Form
                     seconds = 0;
                     frameCount = 0;
                     sessionTimer.Start();
+                    clipboardTimer.Start();
                     viewport.Paint -= PaintPlaceholder;
                     viewport.Invalidate();
                 });
-
-                var stream = tcpClient.GetStream();
-                using var reader = new BinaryReader(stream);
 
                 while (isConnected)
                 {
@@ -281,7 +302,18 @@ public sealed class ReceiverForm : Form
                     if (packet.Type == PacketType.VideoFrame)
                     {
                         frameCount++;
-                        RenderFrame(packet.Payload);
+                        if (packet.Payload.AsSpan().StartsWith("JPEG"u8)) RenderFrame(packet.Payload[4..]);
+                        else if (packet.Payload.AsSpan().StartsWith("H264"u8)) EnsureH264Decoder().DecodeNalUnit(packet.Payload[4..]);
+                        else if (packet.Payload.Length >= 2 && packet.Payload[0] == 0xFF && packet.Payload[1] == 0xD8) RenderFrame(packet.Payload);
+                        else EnsureH264Decoder().DecodeNalUnit(packet.Payload);
+                    }
+                    else if (packet.Type == PacketType.Clipboard)
+                    {
+                        ApplyRemoteClipboard(Encoding.UTF8.GetString(packet.Payload));
+                    }
+                    else if (packet.Type is PacketType.FileMetadata or PacketType.FileChunk or PacketType.FileComplete)
+                    {
+                        fileTransfers.Receive(packet);
                     }
                 }
             }
@@ -289,7 +321,7 @@ public sealed class ReceiverForm : Form
             {
                 if (!connectionAttemptActive) return;
                 var reason = ex.GetBaseException().Message;
-                BeginInvoke(() =>
+                PostToUi(() =>
                 {
                     Disconnect();
                     state.Text = "● Connection failed";
@@ -322,12 +354,92 @@ public sealed class ReceiverForm : Form
                 latestFrame = frame;
             }
             if (Interlocked.Exchange(ref renderPending, 1) != 0) return;
-            BeginInvoke(() => RenderLatestFrame());
+            PostToUi(RenderLatestFrame);
         }
         catch (Exception error)
         {
-            BeginInvoke(() => telemetry.Text = $"Frame decode failed: {error.Message}");
+            PostToUi(() => telemetry.Text = $"Frame decode failed: {error.Message}");
         }
+    }
+
+    private void QueueDecodedFrame(Bitmap frame)
+    {
+        lock (frameLock) { latestFrame?.Dispose(); latestFrame = frame; }
+        if (Interlocked.Exchange(ref renderPending, 1) == 0) PostToUi(RenderLatestFrame);
+    }
+
+    private H264Decoder EnsureH264Decoder()
+    {
+        if (h264Decoder is not null) return h264Decoder;
+        var ffmpegPath = Path.Combine(AppContext.BaseDirectory, "ffmpeg");
+        if (!Directory.Exists(ffmpegPath)) throw new DirectoryNotFoundException("The FFmpeg runtime is required for Android H.264 streams.");
+        H264Decoder.SetFFmpegPath(ffmpegPath);
+        var decoder = new H264Decoder();
+        decoder.OnFrameDecoded += QueueDecodedFrame;
+        decoder.Initialize();
+        h264Decoder = decoder;
+        return decoder;
+    }
+
+    private string? PromptForPairingCode()
+    {
+        string? result = null;
+        if (IsDisposed || !IsHandleCreated) return null;
+        Invoke(() =>
+        {
+            using var dialog = new Form { Text = "Pair with phone", Width = 360, Height = 180, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
+            var label = new Label { Text = "Enter the 6-digit code shown on the phone:", AutoSize = true, Left = 18, Top = 18 };
+            var input = new TextBox { Left = 18, Top = 48, Width = 305, MaxLength = 6 };
+            var ok = new Button { Text = "Pair", DialogResult = DialogResult.OK, Left = 228, Top = 84, Width = 95 };
+            dialog.Controls.AddRange([label, input, ok]); dialog.AcceptButton = ok;
+            if (dialog.ShowDialog(this) == DialogResult.OK) result = input.Text.Trim();
+        });
+        return result;
+    }
+
+    private string? PromptForPhoneAddress()
+    {
+        string? result = null;
+        using var dialog = new Form { Text = "Connect a phone", Width = 430, Height = 220, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false, BackColor = Color.FromArgb(17, 24, 39), ForeColor = Color.White };
+        var heading = new Label { Text = "Android or iPhone address", AutoSize = true, Left = 20, Top = 20, Font = new Font("Segoe UI", 12, FontStyle.Bold) };
+        var help = new Label { Text = "Enter the phone's local IP. Both devices must be on the same trusted network.", AutoSize = true, Left = 20, Top = 52, ForeColor = Color.LightSlateGray };
+        var input = new TextBox { Left = 20, Top = 82, Width = 370, PlaceholderText = "192.168.1.25" };
+        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Left = 210, Top = 122, Width = 85 };
+        var ok = new Button { Text = "Continue", DialogResult = DialogResult.OK, Left = 305, Top = 122, Width = 85 };
+        dialog.Controls.AddRange([heading, help, input, cancel, ok]); dialog.AcceptButton = ok; dialog.CancelButton = cancel;
+        if (dialog.ShowDialog(this) == DialogResult.OK) result = input.Text.Trim();
+        return result;
+    }
+
+    private static void SendPacketTo(TcpClient client, Packet packet)
+    {
+        var bytes = packet.Serialize(); client.GetStream().Write(bytes, 0, bytes.Length);
+    }
+
+    private void SyncLocalClipboard()
+    {
+        if (!isConnected || applyingRemoteClipboard || !Clipboard.ContainsText()) return;
+        var text = Clipboard.GetText();
+        if (text == lastClipboardText) return;
+        lastClipboardText = text;
+        SendPacket(new Packet(PacketType.Clipboard, Encoding.UTF8.GetBytes(text)));
+    }
+
+    private void ApplyRemoteClipboard(string text) => PostToUi(() =>
+    {
+        applyingRemoteClipboard = true;
+        try { Clipboard.SetText(text); lastClipboardText = text; }
+        finally { applyingRemoteClipboard = false; }
+    });
+
+    private void SendDroppedFiles(string[]? paths)
+    {
+        if (!isConnected || paths is null) return;
+        Task.Run(() =>
+        {
+            foreach (var path in paths.Where(File.Exists))
+                foreach (var packet in fileTransfers.CreatePackets(path)) SendPacket(packet);
+        });
     }
 
     private void RenderLatestFrame()
@@ -345,7 +457,7 @@ public sealed class ReceiverForm : Form
         lock (frameLock)
         {
             if (latestFrame is not null && Interlocked.Exchange(ref renderPending, 1) == 0)
-                BeginInvoke(() => RenderLatestFrame());
+                PostToUi(RenderLatestFrame);
         }
     }
 
@@ -388,11 +500,16 @@ public sealed class ReceiverForm : Form
         try
         {
             var bytes = packet.Serialize();
-            lock (sendLock) tcpClient?.GetStream().Write(bytes, 0, bytes.Length);
+            lock (sendLock)
+            {
+                var client = tcpClient;
+                if (client is null || !client.Connected) return;
+                client.GetStream().Write(bytes, 0, bytes.Length);
+            }
         }
         catch (Exception error)
         {
-            BeginInvoke(() => telemetry.Text = $"Input send failed: {error.Message}");
+            PostToUi(() => telemetry.Text = $"Input send failed: {error.Message}");
         }
     }
 
@@ -429,7 +546,7 @@ public sealed class ReceiverForm : Form
                     {
                         var phoneAddress = endpoint.Address.ToString();
                         var requestedTransport = message.Split('|').ElementAtOrDefault(1) == "USB" ? "USB" : "Wi-Fi";
-                        BeginInvoke(() =>
+                        PostToUi(() =>
                         {
                             if (isConnected) Disconnect();
                             ConnectToDevice(phoneAddress, requestedTransport);
@@ -441,7 +558,7 @@ public sealed class ReceiverForm : Form
             catch (ObjectDisposedException) { }
             catch (Exception error)
             {
-                if (discoveryRunning) BeginInvoke(() => telemetry.Text = $"Wireless discovery unavailable: {error.Message}");
+                if (discoveryRunning) PostToUi(() => telemetry.Text = $"Wireless discovery unavailable: {error.Message}");
             }
         }) { IsBackground = true, Name = "DesktopModDiscovery" };
         discoveryThread.Start();
@@ -528,11 +645,16 @@ public sealed class ReceiverForm : Form
         connectionAttemptActive = false;
         isConnected = false;
         sessionTimer.Stop();
-        tcpClient?.Close();
-        tcpClient = null;
+        clipboardTimer.Stop();
+        lock (sendLock)
+        {
+            var client = tcpClient;
+            tcpClient = null;
+            client?.Close();
+        }
         state.Text = "● Waiting for phone";
         state.ForeColor = Color.FromArgb(148, 163, 184);
-        connect.Text = "Connection help";
+        connect.Text = "Connect phone";
         connect.BackColor = Color.FromArgb(37, 99, 235);
         connect.Enabled = true;
         telemetry.Text = "Waiting for Desktop Mod on USB tethering or Wi-Fi";
@@ -544,8 +666,17 @@ public sealed class ReceiverForm : Form
             latestFrame = null;
         }
         Interlocked.Exchange(ref renderPending, 0);
+        h264Decoder?.Dispose();
+        h264Decoder = null;
         viewport.Paint += PaintPlaceholder;
         viewport.Invalidate();
+    }
+
+    private void PostToUi(Action action)
+    {
+        if (IsDisposed || Disposing || !IsHandleCreated) return;
+        try { BeginInvoke(action); }
+        catch (InvalidOperationException) when (IsDisposed || Disposing || !IsHandleCreated) { }
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
@@ -554,6 +685,7 @@ public sealed class ReceiverForm : Form
         discoverySocket?.Close();
         discoverySocket = null;
         Disconnect();
+        fileTransfers.Dispose();
         base.OnFormClosed(e);
     }
 }

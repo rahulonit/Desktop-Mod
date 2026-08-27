@@ -68,10 +68,12 @@ class DesktopPresentation(outerContext: Context, display: Display) :
 
     override fun onStart() {
         super.onStart()
+        lifecycleRegistry.currentState = Lifecycle.State.STARTED
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED
     }
 
     override fun onStop() {
+        lifecycleRegistry.currentState = Lifecycle.State.STARTED
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
         super.onStop()
     }

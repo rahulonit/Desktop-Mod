@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -378,15 +379,21 @@ private fun DesktopContextMenu(
     onSettings: () -> Unit,
     onProperties: () -> Unit,
 ) {
-    Card(
-        Modifier
-            .offset { IntOffset(request.x.coerceAtMost(1660), request.y.coerceAtMost(630)) }
-            .width(238.dp)
-            .zIndex(10_000f)
-            .shadow(22.dp, MaterialTheme.shapes.large),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .97f)),
-        shape = MaterialTheme.shapes.large,
-    ) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+      val density = LocalDensity.current
+      val menuWidth = 238.dp
+      val estimatedMenuHeight = 450.dp
+      val maxX = with(density) { (maxWidth - menuWidth).coerceAtLeast(0.dp).roundToPx() }
+      val maxY = with(density) { (maxHeight - estimatedMenuHeight).coerceAtLeast(0.dp).roundToPx() }
+      Card(
+          Modifier
+              .offset { IntOffset(request.x.coerceIn(0, maxX), request.y.coerceIn(0, maxY)) }
+              .width(menuWidth)
+              .zIndex(10_000f)
+              .shadow(22.dp, MaterialTheme.shapes.large),
+          colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .97f)),
+          shape = MaterialTheme.shapes.large,
+      ) {
         Column(Modifier.padding(vertical = 7.dp)) {
             ContextMenuHeading("View")
             ContextMenuItem("Small icons") { onIconSize(0); onDismiss() }
@@ -407,6 +414,7 @@ private fun DesktopContextMenu(
             ContextMenuItem("Personalize", onSettings)
             ContextMenuItem("Properties", onProperties)
         }
+      }
     }
 }
 
@@ -453,7 +461,9 @@ private fun QuickSettings(usbConnected: Boolean, modifier: Modifier) {
     var volume by remember { mutableFloatStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maximumVolume) }
     val notificationManager = remember { context.getSystemService(NotificationManager::class.java) }
     val batteryLevel = remember { context.getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) }
-    val focusActive = notificationManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL
+    val focusActive = runCatching {
+        notificationManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL
+    }.getOrDefault(false)
     fun openSetting(intent: Intent) {
         runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
     }

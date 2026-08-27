@@ -48,7 +48,11 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     ThemeController.initialize(applicationContext)
 
-    startService(Intent(this, UsbService::class.java))
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      startForegroundService(Intent(this, UsbService::class.java))
+    } else {
+      startService(Intent(this, UsbService::class.java))
+    }
     ConnectionMonitor.start(applicationContext)
 
     setContent {
@@ -66,6 +70,7 @@ class MainActivity : ComponentActivity() {
 
   @Composable
   private fun ConnectionHubScreen(connection: ConnectionSnapshot) {
+    val pairingCode by UsbService.pairingCode.collectAsStateWithLifecycle()
     var selectedMethod by remember { mutableStateOf<ConnectionMethod?>(null) }
     selectedMethod?.let { method ->
       ConnectionGuidePage(connection, method) { selectedMethod = null }
@@ -101,7 +106,22 @@ class MainActivity : ComponentActivity() {
             if (receiverConnected) Button(onClick = { UsbService.disconnectReceiver() }) { Text("Disconnect") }
           } else Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             HeroCopy(receiverConnected, Modifier.fillMaxWidth())
-            if (receiverConnected) Button(onClick = { UsbService.disconnectReceiver() }, modifier = Modifier.fillMaxWidth()) { Text("Disconnect PC") }
+            if (receiverConnected) Button(onClick = { UsbService.disconnectReceiver() }, modifier = Modifier.fillMaxWidth()) { Text("Disconnect computer") }
+          }
+        }
+
+        Text(
+          "Pairing code: $pairingCode  •  Enter this code only on the receiver you trust",
+          style = MaterialTheme.typography.titleMedium,
+          fontWeight = FontWeight.SemiBold,
+          color = MaterialTheme.colorScheme.primary,
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+          Surface(Modifier.weight(1f), color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.padding(14.dp)) { Text("Windows", fontWeight = FontWeight.Bold); Text("H.264 • Input • Clipboard • Files", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+          }
+          Surface(Modifier.weight(1f), color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.padding(14.dp)) { Text("macOS", fontWeight = FontWeight.Bold); Text("H.264 • Input • Clipboard", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
           }
         }
 
@@ -153,7 +173,7 @@ class MainActivity : ComponentActivity() {
   @Composable private fun HeroCopy(connected: Boolean, modifier: Modifier) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
       Text(if (connected) "Your desktop is ready" else "Turn this phone into a desktop", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-      Text(if (connected) "The independent desktop is running on your PC. Keep using your phone normally." else "Connect a PC, monitor, or TV. The desktop appears there while this phone remains usable.", color = MaterialTheme.colorScheme.onPrimaryContainer)
+      Text(if (connected) "The independent desktop is running on your computer. Keep using your phone normally." else "Connect Windows, macOS, a monitor, or TV. The desktop appears there while this phone remains usable.", color = MaterialTheme.colorScheme.onPrimaryContainer)
     }
   }
 
@@ -187,7 +207,7 @@ class MainActivity : ComponentActivity() {
       connection.wirelessReceivers.isNotEmpty() -> "Available • ${connection.wirelessReceivers.size} found"
       else -> "Searching"
     }
-    ConnectionCard(modifier, "USB", "USB to Windows PC", "No Developer Mode required", "Connect a USB data cable and enable USB tethering. Desktop Mod then uses a direct private USB network.", usbStatus, usbConnected, "View setup") { onSelect(ConnectionMethod.USB) }
+    ConnectionCard(modifier, "USB", "USB to computer", "Windows or macOS", "Connect a USB data cable and enable USB tethering. Desktop Mod then uses a direct private USB network.", usbStatus, usbConnected, "View setup") { onSelect(ConnectionMethod.USB) }
     ConnectionCard(modifier, "HDMI", "USB-C / HDMI monitor", "Native external display", "Android checks for a real secondary presentation display. Mirror-only outputs are not treated as desktop mode.", externalStatus, external?.supportsPresentation == true, "View setup") { onSelect(ConnectionMethod.EXTERNAL_DISPLAY) }
     ConnectionCard(modifier, "Wi-Fi", "Wi-Fi to PC or TV", "Nearby receiver discovery", "Compatible Desktop Mod receivers on the same network appear below. Select one to request a wireless session.", wirelessStatus, wirelessConnected, "View setup") { onSelect(ConnectionMethod.WIFI) }
   }
@@ -213,7 +233,7 @@ class MainActivity : ComponentActivity() {
   private fun ConnectionGuidePage(connection: ConnectionSnapshot, method: ConnectionMethod, onBack: () -> Unit) {
     val external = connection.externalDisplays.firstOrNull()
     val title = when (method) {
-      ConnectionMethod.USB -> "USB to Windows PC"
+      ConnectionMethod.USB -> "USB to Windows or Mac"
       ConnectionMethod.EXTERNAL_DISPLAY -> "USB-C / HDMI display"
       ConnectionMethod.WIFI -> "Wi-Fi receiver"
     }
@@ -238,9 +258,9 @@ class MainActivity : ComponentActivity() {
     }
     val steps = when (method) {
       ConnectionMethod.USB -> listOf(
-        "Use a USB data cable—not a charge-only cable—to connect the phone to the Windows PC.",
+        "Use a USB data cable—not a charge-only cable—to connect the phone to the Windows PC or Mac.",
         "Open Android USB tethering settings and turn on USB tethering. Developer Mode and USB debugging are not required.",
-        "Open Desktop Mod Receiver on Windows and allow private-network access if Windows Firewall asks.",
+        "Open Desktop Mod Receiver on the computer and allow local-network access if prompted.",
         "Wait for the PC receiver to appear in the list on this page.",
         "Tap Connect beside the PC. The independent desktop will open through the private USB network.",
       )
@@ -281,7 +301,7 @@ class MainActivity : ComponentActivity() {
               ConnectionMethod.WIFI -> "Connect without a USB cable"
             }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text(when (method) {
-              ConnectionMethod.USB -> "Best performance and lowest latency for a Windows computer."
+              ConnectionMethod.USB -> "Best performance and lowest latency for Windows and macOS computers."
               ConnectionMethod.EXTERNAL_DISPLAY -> "A true secondary Android display is required for an independent desktop."
               ConnectionMethod.WIFI -> "Desktop Mod searches only for compatible receivers on your local network."
             }, color = MaterialTheme.colorScheme.onPrimaryContainer)
@@ -294,7 +314,7 @@ class MainActivity : ComponentActivity() {
             Button(onClick = { openTetheringSettings() }, Modifier.fillMaxWidth()) { Text("Open USB tethering settings") }
             if (connection.receiverConnected && connection.receiverTransport == "USB") Button(onClick = { UsbService.disconnectReceiver() }, Modifier.fillMaxWidth()) { Text("Disconnect USB Desktop") }
             if (connection.usbTetheringActive && connection.wirelessReceivers.isNotEmpty()) NearbyReceivers(connection.wirelessReceivers, "USB")
-            else if (status == "Receiver Not Found") GuideNotice("USB tethering is active, but no receiver was found. Open the Windows receiver and allow it through the private-network firewall.", true)
+            else if (status == "Receiver Not Found") GuideNotice("USB tethering is active, but no receiver was found. Open the desktop receiver and allow it through the private-network firewall.", true)
             else if (status == "USB Tethering Off") GuideNotice("The cable is connected. Turn on USB tethering to create the private USB network used by Desktop Mod.", false)
           }
           ConnectionMethod.EXTERNAL_DISPLAY -> {
@@ -395,6 +415,7 @@ class MainActivity : ComponentActivity() {
     nativePresentation?.dismiss()
     nativePresentation = null
     nativeDisplayId = null
+    if (isFinishing) ConnectionMonitor.stop()
     super.onDestroy()
   }
 
